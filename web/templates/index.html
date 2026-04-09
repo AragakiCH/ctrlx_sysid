@@ -1,11 +1,221 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ctrlX CORE X3 — Identificación de Sistemas</title>
+  <link rel="stylesheet" href="/static/css/app.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
-    <h1>Hola mundo</h1>
+
+  <!-- ==================== HEADER ==================== -->
+  <header>
+    <div class="logo">
+      <span class="logo-wordmark">ctrlX CORE</span>
+      <span class="logo-badge">X3</span>
+      <span class="logo-context">// System Identification</span>
+    </div>
+    <div class="header-status">
+      <div class="status-pill">
+        <div class="status-dot"></div>
+        <span>ONLINE</span>
+      </div>
+      <div class="status-pill" id="clockDisplay"></div>
+    </div>
+  </header>
+
+  <!-- ==================== MAIN LAYOUT ==================== -->
+  <div class="main-layout">
+
+    <!-- ===== SIDEBAR ===== -->
+    <aside class="sidebar">
+
+      <div class="section-header">Señales de Entrada</div>
+
+      <div class="input-group">
+        <label>Tipo de Señal <span class="label-unit">PLC I/O</span></label>
+        <select id="signalType" onchange="updateSignalLabels()">
+          <option value="ma">4-20 mA (Corriente)</option>
+          <option value="percent">0-100 % (Porcentaje)</option>
+        </select>
+      </div>
+
+      <div class="input-group">
+        <label>Tiempo <span class="label-unit" id="timeUnit">segundos</span></label>
+        <textarea id="dataTime" placeholder="0, 1, 2, 3, 4, 5 ..." rows="3"></textarea>
+      </div>
+
+      <div class="input-group">
+        <label>Actuador — Salida PLC <span class="label-unit" id="actUnit">mA</span></label>
+        <textarea id="dataActuator" placeholder="4.0, 4.0, 12.0, 12.0 ..." rows="3"></textarea>
+      </div>
+
+      <div class="input-group">
+        <label>Sensor — Entrada PLC <span class="label-unit" id="senUnit">mA</span></label>
+        <textarea id="dataSensor" placeholder="4.0, 4.1, 5.2, 8.3 ..." rows="3"></textarea>
+      </div>
+
+      <div class="input-group">
+        <label>Set Point <span class="label-unit" id="spUnit">mA (opcional)</span></label>
+        <textarea id="dataSetpoint" placeholder="12.0, 12.0, 12.0 ..." rows="2"></textarea>
+      </div>
+
+      <div class="input-group">
+        <label>Orden de Identificación</label>
+        <select id="orderSelect">
+          <option value="auto">Automático (Mejor ajuste)</option>
+          <option value="0">Integrante + Dead Time</option>
+          <option value="1">1er Orden + Dead Time (FOPDT)</option>
+          <option value="2">2do Orden + Dead Time (SOPDT)</option>
+        </select>
+      </div>
+
+      <div class="btn-group">
+        <button class="btn btn-primary" onclick="runIdentification()">▶ Identificar Sistema</button>
+        <button class="btn btn-secondary" onclick="clearAll()">✕ Limpiar</button>
+      </div>
+
+      <div class="section-header">Datos de Ejemplo</div>
+      <div class="sample-buttons">
+        <button class="btn-sample" onclick="loadSample('fopdt')">FOPDT<br>1er Orden</button>
+        <button class="btn-sample" onclick="loadSample('sopdt')">SOPDT<br>2do Orden</button>
+        <button class="btn-sample" onclick="loadSample('integrating')">INT<br>Integrante</button>
+      </div>
+
+      <div class="input-group" style="margin-top:auto">
+        <label>Nivel de Ruido <span class="label-unit">σ</span></label>
+        <input type="number" id="noiseLevel" value="0.5" step="0.1" min="0" max="5">
+      </div>
+
+    </aside>
+
+    <!-- ===== CONTENT ===== -->
+    <main class="content" style="position:relative">
+
+      <div class="loading-overlay" id="loadingOverlay">
+        <div class="spinner"></div>
+        <div class="loading-text">Procesando...</div>
+      </div>
+
+      <!-- Tabs -->
+      <nav class="tabs">
+        <div class="tab active" onclick="switchTab('data')">Señales</div>
+        <div class="tab"        onclick="switchTab('identification')">Identificación</div>
+        <div class="tab"        onclick="switchTab('pid')">Sintonía PID</div>
+        <div class="tab"        onclick="switchTab('bode')">Análisis Frecuencial</div>
+      </nav>
+
+      <!-- TAB: SEÑALES -->
+      <div class="tab-content active" id="tab-data">
+        <div class="chart-area">
+
+          <div class="chart-card">
+            <div class="chart-title">
+              <span>Señal Actuador — Salida Corriente PLC</span>
+              <div class="chart-label">
+                <div class="legend-item"><div class="legend-dot" style="background:#0078c8"></div><span>Actuador</span></div>
+                <div class="legend-item"><div class="legend-dot" style="background:#c47a00"></div><span>Set Point</span></div>
+              </div>
+            </div>
+            <div class="chart-wrapper"><canvas id="chartActuator"></canvas></div>
+          </div>
+
+          <div class="chart-card">
+            <div class="chart-title">
+              <span>Señal Sensor — Entrada Corriente PLC</span>
+              <div class="chart-label">
+                <div class="legend-item"><div class="legend-dot" style="background:#1a9e5c"></div><span>Sensor / PV</span></div>
+              </div>
+            </div>
+            <div class="chart-wrapper"><canvas id="chartSensor"></canvas></div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- TAB: IDENTIFICACIÓN -->
+      <div class="tab-content" id="tab-identification">
+
+        <div id="metricsBar" class="metrics-bar" style="display:none">
+          <div class="metric-cell">
+            <div class="metric-label">Mejor Modelo</div>
+            <div class="metric-value" id="metBestModel">—</div>
+          </div>
+          <div class="metric-cell">
+            <div class="metric-label">Ajuste R²</div>
+            <div class="metric-value" id="metFitQuality">—</div>
+          </div>
+          <div class="metric-cell">
+            <div class="metric-label">Ganancia K</div>
+            <div class="metric-value" id="metK">—</div>
+          </div>
+          <div class="metric-cell">
+            <div class="metric-label">Dead Time L</div>
+            <div class="metric-value" id="metL">—</div>
+          </div>
+        </div>
+
+        <div id="noResultsMsg" style="display:flex">
+          <div class="no-results-icon">⚙</div>
+          <span>Cargue datos y ejecute identificación</span>
+        </div>
+
+        <div class="chart-card" id="idChartCard" style="display:none;margin:12px;flex-shrink:0;height:240px">
+          <div class="chart-title">
+            <span>Respuesta Medida vs Modelo Identificado</span>
+            <div class="chart-label">
+              <div class="legend-item"><div class="legend-dot" style="background:#1a9e5c"></div><span>Medido</span></div>
+              <div class="legend-item"><div class="legend-dot" style="background:#e03050"></div><span>Modelo 1er</span></div>
+              <div class="legend-item"><div class="legend-dot" style="background:#7048c8"></div><span>Modelo 2do</span></div>
+            </div>
+          </div>
+          <div class="chart-wrapper"><canvas id="chartComparison"></canvas></div>
+        </div>
+
+        <div class="results-grid scrollable" id="resultsGrid" style="display:none"></div>
+
+      </div>
+
+      <!-- TAB: SINTONÍA PID -->
+      <div class="tab-content" id="tab-pid">
+        <div id="noPidMsg" style="display:flex">
+          <div class="no-results-icon">🎛</div>
+          <span>Ejecute identificación primero</span>
+        </div>
+        <div class="pid-section scrollable" id="pidContent" style="display:none">
+          <div class="pid-title">Parámetros PID — Métodos de Sintonía</div>
+          <div id="pidTablesContainer"></div>
+          <div class="info-box" id="pidInfoBox"></div>
+        </div>
+      </div>
+
+      <!-- TAB: ANÁLISIS FRECUENCIAL -->
+      <div class="tab-content" id="tab-bode">
+        <div id="noBodeMsg" style="display:flex">
+          <div class="no-results-icon">📊</div>
+          <span>Ejecute identificación para ver Bode</span>
+        </div>
+        <div class="chart-area chart-single" id="bodeContent" style="display:none">
+          <div class="chart-card">
+            <div class="chart-title"><span>Diagrama de Bode — Magnitud y Fase</span></div>
+            <div class="chart-wrapper"><canvas id="chartBode"></canvas></div>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <div class="notification" id="notification"></div>
+
+  <!-- Scripts: orden importante state → ui → charts → identification → pid → api -->
+  <script src="/static/js/state.js"></script>
+  <script src="/static/js/ui.js"></script>
+  <script src="/static/js/charts.js"></script>
+  <script src="/static/js/identification.js"></script>
+  <script src="/static/js/pid.js"></script>
+  <script src="/static/js/api.js"></script>
+
 </body>
 </html>

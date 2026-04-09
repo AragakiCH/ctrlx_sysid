@@ -1,0 +1,95 @@
+/* web/static/css/login.css */
+:root {
+    --bg-dark: #2b2b2b;
+    --bg-light: #eff1f2;
+    --accent: #007bc0; /* El azul de ctrlX */
+    --text-main: #202529;
+    --border: #d1d7dd;
+}
+
+body {
+    margin: 0;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: var(--bg-light);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+}
+
+.login-container {
+    width: 100%;
+    max-width: 400px;
+    padding: 20px;
+}
+
+.login-box {
+    background: white;
+    padding: 40px;
+    border-radius: 2px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    border-top: 4px solid var(--accent);
+}
+
+.login-header {
+    font-size: 24px;
+    font-weight: bold;
+    margin-bottom: 5px;
+}
+
+.brand { color: var(--text-main); }
+.sub-brand { color: var(--accent); }
+
+.login-subtitle {
+    color: #666;
+    font-size: 14px;
+    margin-bottom: 30px;
+}
+
+.input-group {
+    margin-bottom: 20px;
+}
+
+.input-group label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    margin-bottom: 5px;
+    color: var(--text-main);
+}
+
+.input-group input {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid var(--border);
+    outline: none;
+    box-sizing: border-box;
+    transition: border 0.3s;
+}
+
+.input-group input:focus {
+    border-color: var(--accent);
+}
+
+.btn-login {
+    width: 100%;
+    padding: 12px;
+    background-color: var(--accent);
+    color: white;
+    border: none;
+    font-weight: bold;
+    cursor: pointer;
+    margin-top: 10px;
+    transition: background 0.3s;
+}
+
+.btn-login:hover {
+    background-color: #005a8c;
+}
+
+.error-msg {
+    color: #ed1c24;
+    font-size: 13px;
+    margin-top: 15px;
+    text-align: center;
+}
