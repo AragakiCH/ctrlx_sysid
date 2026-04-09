@@ -1,0 +1,6 @@
+opcua
+python-dotenv
+fastapi
+uvicorn[standard]
+cryptography
+jinja2
