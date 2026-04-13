@@ -173,6 +173,14 @@ async def shutdown_event() -> None:
 async def home(request: Request):
     return templates.TemplateResponse(
         request=request,
+        name="login.html",
+        context={},
+    )
+
+@app.get("/app", response_class=HTMLResponse)
+async def app_view(request: Request):
+    return templates.TemplateResponse(
+        request=request,
         name="index.html",
         context={},
     )

@@ -40,9 +40,9 @@
         document.getElementById('loginForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             
-            const ip = document.getElementById('ip').value;
-            const user = document.getElementById('user').value;
-            const pass = document.getElementById('password').value;
+            const ip = document.getElementById('ip').value.trim().replace(/\s+/g, '');
+            const user = document.getElementById('user').value.trim();
+            const pass = document.getElementById('password').value.trim();
             
             // Concatenamos la URL según tu requerimiento
             const fullUrl = `opc.tcp://${ip}:4840`;
@@ -64,7 +64,7 @@
 
                 if (response.ok) {
                     localStorage.setItem('isAuth', 'true');
-                    window.location.href = 'index.html';
+                    window.location.href = '/app';
                 } else {
                     document.getElementById('errorMessage').innerText = 'Fallo en la autenticación';
                 }
