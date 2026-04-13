@@ -10,7 +10,7 @@ const SampleStore = {
   actuator_pct: [],
   sensor_pct: [],
   setpoint_pct: [],
-  maxPoints: 300
+  maxPoints: 300,
 };
 
 function getWsUrl() {
@@ -97,7 +97,10 @@ function handleWsMessage(msg) {
     case "error":
       console.error("Error WS:", msg);
       if (typeof showNotification === "function") {
-        showNotification(msg.message || "Error recibido por WebSocket", "error");
+        showNotification(
+          msg.message || "Error recibido por WebSocket",
+          "error",
+        );
       }
       break;
 
@@ -163,17 +166,20 @@ function refreshSignalsViewFromSampleStore() {
 
   const time = [...SampleStore.time];
 
-  const actuator = signalType === "percent"
-    ? [...SampleStore.actuator_pct]
-    : [...SampleStore.actuator_ma];
+  const actuator =
+    signalType === "percent"
+      ? [...SampleStore.actuator_pct]
+      : [...SampleStore.actuator_ma];
 
-  const sensor = signalType === "percent"
-    ? [...SampleStore.sensor_pct]
-    : [...SampleStore.sensor_ma];
+  const sensor =
+    signalType === "percent"
+      ? [...SampleStore.sensor_pct]
+      : [...SampleStore.sensor_ma];
 
-  const setpoint = signalType === "percent"
-    ? [...SampleStore.setpoint_pct]
-    : [...SampleStore.setpoint_ma];
+  const setpoint =
+    signalType === "percent"
+      ? [...SampleStore.setpoint_pct]
+      : [...SampleStore.setpoint_ma];
 
   console.log("actuator[último] =", actuator[actuator.length - 1]);
   console.log("sensor[último] =", sensor[sensor.length - 1]);
@@ -207,17 +213,21 @@ function handleIdentificationResult(data) {
   }
 
   const normalized = models.map(normalizeModelResult);
-  const winner = normalized.find(m => m.model_type === winnerType) || normalized[0];
+  const winner =
+    normalized.find((m) => m.model_type === winnerType) || normalized[0];
 
   renderMetricsBar(winner);
   renderResultsGrid(normalized, winnerType);
   renderPidSection(winner);
+  plotPIDTunings(winner.pid_tunings);
   plotBode(winner);
 
   // Solo si el backend manda curvas simuladas
   const measuredTime = parseTextareaNumbers("dataTime");
   const measuredSensor = parseTextareaNumbers("dataSensor");
-  const plottable = normalized.filter(x => Array.isArray(x.simulated) && x.simulated.length);
+  const plottable = normalized.filter(
+    (x) => Array.isArray(x.simulated) && x.simulated.length,
+  );
 
   if (
     measuredTime.length &&
@@ -225,9 +235,9 @@ function handleIdentificationResult(data) {
     plottable.length &&
     typeof plotComparison === "function"
   ) {
-    const comparisonResults = plottable.map(m => ({
+    const comparisonResults = plottable.map((m) => ({
       method: modelTypeLabel(m.model_type),
-      simulated: m.simulated
+      simulated: m.simulated,
     }));
 
     plotComparison(measuredTime, measuredSensor, comparisonResults);
@@ -250,7 +260,7 @@ function normalizeModelResult(model) {
     tau2: asNumber(model.tau2),
     tf_string: model.tf_string || "—",
     pid_tunings: Array.isArray(model.pid_tunings) ? model.pid_tunings : [],
-    simulated: Array.isArray(model.simulated) ? model.simulated : null
+    simulated: Array.isArray(model.simulated) ? model.simulated : null,
   };
 }
 
@@ -275,12 +285,13 @@ function renderResultsGrid(models, winnerType) {
   const grid = document.getElementById("resultsGrid");
   if (!grid) return;
 
-  grid.innerHTML = models.map(model => {
-    const isWinner = model.model_type === winnerType;
-    const paramsHtml = buildModelParamsHtml(model);
-    const pidCount = model.pid_tunings?.length || 0;
+  grid.innerHTML = models
+    .map((model) => {
+      const isWinner = model.model_type === winnerType;
+      const paramsHtml = buildModelParamsHtml(model);
+      const pidCount = model.pid_tunings?.length || 0;
 
-    return `
+      return `
       <div class="result-card ${isWinner ? "best" : ""}">
         <div class="result-header">
           <div class="result-method">${modelTypeLabel(model.model_type)}</div>
@@ -309,7 +320,8 @@ function renderResultsGrid(models, winnerType) {
         </div>
       </div>
     `;
-  }).join("");
+    })
+    .join("");
 
   grid.style.display = "grid";
 }
@@ -372,18 +384,20 @@ function renderPidSection(winner) {
 
   if (!tunings.length) {
     if (pidTablesContainer) pidTablesContainer.innerHTML = "";
-    if (pidInfoBox) pidInfoBox.textContent = "El modelo ganador no incluye sintonías PID.";
+    if (pidInfoBox)
+      pidInfoBox.textContent = "El modelo ganador no incluye sintonías PID.";
     return;
   }
 
-  const rows = tunings.map(t => {
-    const method = t.method || t.name || "Método";
-    const kp = formatNumber(t.kp ?? t.Kp, 4);
-    const ki = formatNumber(t.ki ?? t.Ki, 4);
-    const kd = formatNumber(t.kd ?? t.Kd, 4);
-    const desc = t.description || t.desc || "—";
+  const rows = tunings
+    .map((t) => {
+      const method = t.method || t.name || "Método";
+      const kp = formatNumber(t.kp ?? t.Kp, 4);
+      const ki = formatNumber(t.ki ?? t.Ki, 4);
+      const kd = formatNumber(t.kd ?? t.Kd, 4);
+      const desc = t.description || t.desc || "—";
 
-    return `
+      return `
       <tr>
         <td class="td-method">${escapeHtml(method)}</td>
         <td class="td-value">${kp}</td>
@@ -392,7 +406,8 @@ function renderPidSection(winner) {
         <td class="td-desc">${escapeHtml(desc)}</td>
       </tr>
     `;
-  }).join("");
+    })
+    .join("");
 
   pidTablesContainer.innerHTML = `
     <div class="pid-table-wrapper">
@@ -417,7 +432,6 @@ function renderPidSection(winner) {
     pidInfoBox.textContent = `Sintonías PID generadas a partir del modelo ganador: ${modelTypeLabel(winner.model_type)}.`;
   }
 
-  if (noPidMsg) noPidMsg.style.display = "none";
   if (pidContent) pidContent.style.display = "block";
 }
 
@@ -444,7 +458,9 @@ function setTextareaValues(id, values) {
   const el = document.getElementById(id);
   if (!el || !Array.isArray(values)) return;
   el.value = values
-    .map(v => (typeof v === "number" && Number.isFinite(v) ? Number(v).toFixed(4) : ""))
+    .map((v) =>
+      typeof v === "number" && Number.isFinite(v) ? Number(v).toFixed(4) : "",
+    )
     .join(", ");
 }
 
@@ -453,8 +469,8 @@ function parseTextareaNumbers(id) {
   if (!el) return [];
   return el.value
     .split(",")
-    .map(v => Number(v.trim()))
-    .filter(v => !Number.isNaN(v));
+    .map((v) => Number(v.trim()))
+    .filter((v) => !Number.isNaN(v));
 }
 
 function ensureArray(value) {
@@ -475,16 +491,21 @@ function pickNumber(...values) {
 }
 
 function formatNumber(value, decimals = 4) {
-  if (value === null || value === undefined || Number.isNaN(Number(value))) return "—";
+  if (value === null || value === undefined || Number.isNaN(Number(value)))
+    return "—";
   return Number(value).toFixed(decimals);
 }
 
 function modelTypeLabel(type) {
   switch ((type || "").toLowerCase()) {
-    case "fopdt": return "1er Orden (FOPDT)";
-    case "sopdt": return "2do Orden (SOPDT)";
-    case "integrating": return "Integrante";
-    default: return type || "Modelo";
+    case "fopdt":
+      return "1er Orden (FOPDT)";
+    case "sopdt":
+      return "2do Orden (SOPDT)";
+    case "integrating":
+      return "Integrante";
+    default:
+      return type || "Modelo";
   }
 }
 

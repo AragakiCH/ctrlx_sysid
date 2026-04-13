@@ -177,6 +177,14 @@ async def home(request: Request):
         context={},
     )
 
+@app.get("/app", response_class=HTMLResponse)
+async def app_view(request: Request):
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context={},
+    )
+
 
 @app.get("/health")
 async def health() -> dict:

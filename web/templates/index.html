@@ -86,7 +86,7 @@
           ></textarea>
         </div>
 
-        <div class="input-group">
+        <!-- <div class="input-group">
           <label>Orden de Identificación</label>
           <select id="orderSelect">
             <option value="auto">Automático (Mejor ajuste)</option>
@@ -94,18 +94,18 @@
             <option value="1">1er Orden + Dead Time (FOPDT)</option>
             <option value="2">2do Orden + Dead Time (SOPDT)</option>
           </select>
-        </div>
+        </div> -->
 
-        <div class="btn-group">
+        <!-- <div class="btn-group">
           <button class="btn btn-primary" onclick="runIdentification()">
             ▶ Identificar Sistema
           </button>
           <button class="btn btn-secondary" onclick="clearAll()">
             ✕ Limpiar
           </button>
-        </div>
+        </div> -->
 
-        <div class="section-header">Datos de Ejemplo</div>
+        <!-- <div class="section-header">Datos de Ejemplo</div>
         <div class="sample-buttons">
           <button class="btn-sample" onclick="loadSample('fopdt')">
             FOPDT<br />1er Orden
@@ -116,7 +116,7 @@
           <button class="btn-sample" onclick="loadSample('integrating')">
             INT<br />Integrante
           </button>
-        </div>
+        </div> -->
 
         <div class="input-group" style="margin-top: auto">
           <label>Nivel de Ruido <span class="label-unit">σ</span></label>
@@ -250,19 +250,27 @@
         </div>
 
         <!-- TAB: SINTONÍA PID -->
+        <!-- TAB: SINTONÍA PID -->
         <div class="tab-content" id="tab-pid">
-          <div id="noPidMsg" style="display: flex">
+          <!-- <div id="noPidMsg" style="display: flex">
             <div class="no-results-icon">🎛</div>
             <span>Ejecute identificación primero</span>
-          </div>
-          <div
-            class="pid-section scrollable"
-            id="pidContent"
-            style="display: none"
-          >
+          </div> -->
+
+          <div class="pid-section scrollable" id="pidContent">
             <div class="pid-title">Parámetros PID — Métodos de Sintonía</div>
             <div id="pidTablesContainer"></div>
             <div class="info-box" id="pidInfoBox"></div>
+
+            <!-- 🔥 TU GRÁFICO AQUÍ DENTRO -->
+            <div class="chart-card" style="margin-top: 12px">
+              <div class="chart-title">
+                <span>Comparación Parámetros PID</span>
+              </div>
+              <div class="chart-wrapper">
+                <canvas id="chartPID"></canvas>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -296,7 +304,7 @@
     <script src="/static/js/charts.js"></script>
     <script src="/static/js/identification.js"></script>
     <script src="/static/js/pid.js"></script>
-    
+
     <script src="/static/js/api_plc.js"></script>
   </body>
 </html>
