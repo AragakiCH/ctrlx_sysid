@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+opcua
+python-dotenv
+cryptography
+jinja2
+numpy
+scipy
+matplotlib
+openpyxl
