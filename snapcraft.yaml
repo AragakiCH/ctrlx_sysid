@@ -1,0 +1,78 @@
+name: api-sysid
+base: core22
+version: "1.0.0"
+summary: Identificación de sistemas para ctrlX CORE
+description: |
+  Aplicación FastAPI + WebSocket para identificación de sistemas sobre ctrlX CORE.
+
+grade: stable
+confinement: strict
+
+architectures:
+  - build-on: amd64
+  - build-on: arm64
+
+parts:
+  app:
+    plugin: nil
+    source: .
+
+    build-packages:
+      - python3
+      - python3-venv
+      - python3-pip
+      - python3-dev
+      - build-essential
+      - rsync
+
+    override-build: |
+      mkdir -p "$CRAFT_PART_INSTALL/app" "$CRAFT_PART_INSTALL/bin"
+
+      rsync -a \
+        --exclude '.git' \
+        --exclude '.venv' \
+        --exclude '__pycache__' \
+        --exclude '*.pyc' \
+        --exclude 'tests' \
+        ./ "$CRAFT_PART_INSTALL/app/"
+
+      cp -f bin/websocket-wrapper.sh "$CRAFT_PART_INSTALL/bin/"
+      chmod +x "$CRAFT_PART_INSTALL/bin/websocket-wrapper.sh"
+
+      python3 -m venv "$CRAFT_PART_INSTALL/venv"
+      "$CRAFT_PART_INSTALL/venv/bin/pip" install --upgrade pip setuptools wheel
+      "$CRAFT_PART_INSTALL/venv/bin/pip" install -r "$CRAFT_PART_INSTALL/app/requirements.snap.txt"
+
+  webui-assets:
+    plugin: dump
+    source: package-assets/
+    organize:
+      "*": package-assets/
+
+  gui-meta:
+    plugin: dump
+    source: meta/
+    organize:
+      "gui/*": meta/gui/
+
+
+apps:
+  api-sysid:
+    command: bin/websocket-wrapper.sh
+    daemon: simple
+    restart-condition: always
+    environment:
+      APP_PREFIX: /api-sysid
+      API_HOST: 0.0.0.0
+      API_PORT: "8000"
+    plugs:
+      - network
+      - network-bind
+
+slots:
+  package-assets:
+    interface: content
+    content: package-assets
+    source:
+      read:
+        - $SNAP/package-assets

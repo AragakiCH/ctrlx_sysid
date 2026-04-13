@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-import uvicorn
+from fastapi.middleware.cors import CORSMiddleware
 
 from api.routes.opcua import router as opcua_router
 from application.services.identification_pipeline_service import IdentificationPipelineService
@@ -17,14 +18,14 @@ from application.services.realtime_service import RealtimeService
 from application.services.step_detector_service import StepDetectorService
 from websocket.handlers import handle_ws_message
 from websocket.manager import ConnectionManager
-from fastapi.middleware.cors import CORSMiddleware
-
+import uvicorn
 
 BASE_DIR = Path(__file__).resolve().parent
 WEB_DIR = BASE_DIR / "web"
 STATIC_DIR = WEB_DIR / "static"
 TEMPLATES_DIR = WEB_DIR / "templates"
 
+APP_PREFIX = os.getenv("APP_PREFIX", "/api-sysid")
 app = FastAPI()
 
 ALLOWED_ORIGINS = [
@@ -44,8 +45,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+##app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+##templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 manager = ConnectionManager()
 realtime_service = RealtimeService(max_buffer_size=5000)
@@ -155,8 +156,7 @@ app.state.opcua_session_service = opcua_session_service
 app.state.last_identification_result = None
 app.state.last_step_index = None
 
-app.include_router(opcua_router)
-
+app.include_router(opcua_router, prefix=APP_PREFIX)
 
 @app.on_event("startup")
 async def startup_event() -> None:
@@ -169,24 +169,24 @@ async def shutdown_event() -> None:
     opcua_session_service.stop()
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get(f"{APP_PREFIX}/", response_class=HTMLResponse)
 async def home(request: Request):
     return templates.TemplateResponse(
         request=request,
         name="login.html",
-        context={},
+        context={"app_prefix": APP_PREFIX},
     )
 
-@app.get("/app", response_class=HTMLResponse)
+@app.get(f"{APP_PREFIX}/app", response_class=HTMLResponse)
 async def app_view(request: Request):
     return templates.TemplateResponse(
         request=request,
         name="index.html",
-        context={},
+        context={"app_prefix": APP_PREFIX},
     )
 
 
-@app.get("/health")
+@app.get(f"{APP_PREFIX}/health")
 async def health() -> dict:
     latest = realtime_service.get_latest_sample()
 
@@ -202,7 +202,7 @@ async def health() -> dict:
     }
 
 
-@app.websocket("/ws")
+@app.websocket(f"{APP_PREFIX}/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
     await manager.connect(websocket)
 
@@ -242,6 +242,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     except Exception:
         manager.disconnect(websocket)
 
+app.mount(f"{APP_PREFIX}/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)

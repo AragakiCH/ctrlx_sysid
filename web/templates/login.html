@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ctrlX Login | System ID</title>
-    <link rel="stylesheet" href="../static/css/login.css">
+    <link rel="stylesheet" href="{{ app_prefix }}/static/css/login.css">
 </head>
 <body>
     <div class="login-container">
@@ -37,6 +37,8 @@
     </div>
 
     <script>
+          window.APP_PREFIX = "{{ app_prefix }}";
+          window.API_BASE = `${window.location.origin}${window.APP_PREFIX}`;
         document.getElementById('loginForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             
@@ -55,7 +57,7 @@
 
             try {
                 // Cambia '/api/auth' por tu ruta real del backend
-                const response = await fetch('http://localhost:8000/api/opcua/login', {
+                const response = await fetch(`${window.API_BASE}/api/opcua/login`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
@@ -64,7 +66,7 @@
 
                 if (response.ok) {
                     localStorage.setItem('isAuth', 'true');
-                    window.location.href = '/app';
+                    window.location.href = `${window.APP_PREFIX}/app`;
                 } else {
                     document.getElementById('errorMessage').innerText = 'Fallo en la autenticación';
                 }

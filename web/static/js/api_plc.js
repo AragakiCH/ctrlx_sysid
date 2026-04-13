@@ -14,8 +14,14 @@ const SampleStore = {
 };
 
 function getWsUrl() {
+  if (window.State?.WS_BASE) {
+    return `${window.State.WS_BASE}/ws`;
+  }
+
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${window.location.host}/ws`;
+  const parts = window.location.pathname.split("/").filter(Boolean);
+  const prefix = parts.length ? `/${parts[0]}` : "";
+  return `${protocol}//${window.location.host}${prefix}/ws`;
 }
 
 function connectWebSocket() {
