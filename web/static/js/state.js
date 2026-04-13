@@ -1,6 +1,8 @@
-// ==================== STATE ====================
-const State = {
-  charts: {},
-  identificationResults: null,
-  API_BASE: 'http://localhost:5000/api',
+window.State = {
+  charts: {
+    actuator: null,
+    sensor: null,
+    comparison: null,
+    bode: null
+  }
 };
