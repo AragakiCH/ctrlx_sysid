@@ -13,18 +13,8 @@
     "sidebar": [
       {
         "id": "api-sysid",
-        "title": "System ID",
-        "link": "/api-sysid/"
-      }
-    ]
-  },
-  "services": {
-    "proxyMapping": [
-      {
-        "id": "api-sysid-web",
-        "url": "/api-sysid",
-        "binding": ":8000",
-        "type": "reverseProxy"
+        "title": "Ctrlx Sysid",
+        "link": "/api-sysid/open.html"
       }
     ]
   }

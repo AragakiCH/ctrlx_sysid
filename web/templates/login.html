@@ -37,41 +37,40 @@
     </div>
 
     <script>
-          window.APP_PREFIX = "{{ app_prefix }}";
-          window.API_BASE = `${window.location.origin}${window.APP_PREFIX}`;
+        window.API_BASE = window.location.origin;
+
         document.getElementById('loginForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            
+
             const ip = document.getElementById('ip').value.trim().replace(/\s+/g, '');
             const user = document.getElementById('user').value.trim();
             const pass = document.getElementById('password').value.trim();
-            
-            // Concatenamos la URL según tu requerimiento
+
             const fullUrl = `opc.tcp://${ip}:4840`;
 
             const payload = {
-                user: user,
-                password: pass,
-                url: fullUrl
+            user: user,
+            password: pass,
+            url: fullUrl
             };
 
             try {
-                // Cambia '/api/auth' por tu ruta real del backend
-                const response = await fetch(`${window.API_BASE}/api/opcua/login`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                console.log(payload);
+            const response = await fetch(`${window.API_BASE}/api/opcua/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
 
-                if (response.ok) {
-                    localStorage.setItem('isAuth', 'true');
-                    window.location.href = `${window.APP_PREFIX}/app`;
-                } else {
-                    document.getElementById('errorMessage').innerText = 'Fallo en la autenticación';
-                }
+            console.log(payload);
+
+            if (response.ok) {
+                localStorage.setItem('isAuth', 'true');
+                window.location.href = '/app';
+            } else {
+                document.getElementById('errorMessage').innerText = 'Fallo en la autenticación';
+            }
             } catch (err) {
-                console.error("Error:", err);
+            console.error("Error:", err);
             }
         });
     </script>

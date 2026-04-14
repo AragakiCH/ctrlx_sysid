@@ -48,6 +48,9 @@ app.add_middleware(
 ##app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 ##templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
 manager = ConnectionManager()
 realtime_service = RealtimeService(max_buffer_size=5000)
 identification_service = IdentificationService()
@@ -156,7 +159,7 @@ app.state.opcua_session_service = opcua_session_service
 app.state.last_identification_result = None
 app.state.last_step_index = None
 
-app.include_router(opcua_router, prefix=APP_PREFIX)
+app.include_router(opcua_router)
 
 @app.on_event("startup")
 async def startup_event() -> None:
@@ -169,7 +172,7 @@ async def shutdown_event() -> None:
     opcua_session_service.stop()
 
 
-@app.get(f"{APP_PREFIX}/", response_class=HTMLResponse)
+@app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     return templates.TemplateResponse(
         request=request,
@@ -177,7 +180,7 @@ async def home(request: Request):
         context={"app_prefix": APP_PREFIX},
     )
 
-@app.get(f"{APP_PREFIX}/app", response_class=HTMLResponse)
+@app.get("/app", response_class=HTMLResponse)
 async def app_view(request: Request):
     return templates.TemplateResponse(
         request=request,
@@ -186,7 +189,7 @@ async def app_view(request: Request):
     )
 
 
-@app.get(f"{APP_PREFIX}/health")
+@app.get("/health")
 async def health() -> dict:
     latest = realtime_service.get_latest_sample()
 
@@ -202,7 +205,7 @@ async def health() -> dict:
     }
 
 
-@app.websocket(f"{APP_PREFIX}/ws")
+@app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
     await manager.connect(websocket)
 
@@ -242,8 +245,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     except Exception:
         manager.disconnect(websocket)
 
-app.mount(f"{APP_PREFIX}/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
