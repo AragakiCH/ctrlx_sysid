@@ -14,7 +14,8 @@
       {
         "id": "api-sysid",
         "title": "Ctrlx Sysid",
-        "link": "/api-sysid/open.html"
+        "link": "http://${hostname}:8000/",
+        "target": "_blank"
       }
     ]
   }
