@@ -212,7 +212,7 @@
 
           <div id="noResultsMsg" style="display: flex">
             <div class="no-results-icon">⚙</div>
-            <span>Cargue datos y ejecute identificación</span>
+            <span>Cargando Datos</span>
           </div>
 
           <div
@@ -278,7 +278,7 @@
         <div class="tab-content" id="tab-bode">
           <div id="noBodeMsg" style="display: flex">
             <div class="no-results-icon">📊</div>
-            <span>Ejecute identificación para ver Bode</span>
+            <span>Esperando Resultados</span>
           </div>
           <div
             class="chart-area chart-single"
@@ -297,6 +297,16 @@
     </div>
 
     <div class="notification" id="notification"></div>
+
+    <script>
+      const nav = performance.getEntriesByType("navigation")[0];
+
+      if (nav && nav.type === "reload") {
+        sessionStorage.clear();
+        localStorage.removeItem("plc_session");
+        window.location.href = "/";
+      }
+    </script>
 
     <!-- Scripts: orden importante state → ui → charts → identification → pid → api -->
     <script src="/static/js/state.js"></script>
