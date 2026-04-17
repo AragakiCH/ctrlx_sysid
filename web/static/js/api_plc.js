@@ -140,10 +140,33 @@ function handleLatest(data) {
 function handleSample(data) {
   const raw = data.raw || {};
 
-  const timeValue = pickNumber(data.time, raw.rTimeSec, raw.arrTimeSec);
-  const actuatorMa = pickNumber(data.actuator, raw.rActuator);
-  const sensorMa = pickNumber(data.sensor, raw.rSensor);
-  const setpointMa = pickNumber(data.setpoint, raw.rSetPoint);
+  const timeValue = pickNumber(
+    data.time,
+    raw.rTimeSec,
+    raw.rTiempoSeg,
+    raw.arrTimeSec
+  );
+
+  const actuatorMa = pickNumber(
+    data.actuator,
+    raw.rActuator,
+    raw.AO_Actuador_mA,
+    raw.AO_Actuador
+  );
+
+  const sensorMa = pickNumber(
+    data.sensor,
+    raw.rSensor,
+    raw.AI_Sensor_mA,
+    raw.AI_Sensor
+  );
+
+  const setpointMa = pickNumber(
+    data.setpoint,
+    raw.rSetPoint,
+    raw.SP_mA,
+    raw.SP
+  );
 
   const actuatorPct = pickNumber(data.actuator_pct);
   const sensorPct = pickNumber(data.sensor_pct);
