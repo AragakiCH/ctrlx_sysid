@@ -99,8 +99,13 @@
             localStorage.setItem("isAuth", "true");
             window.location.href = "/app";
             } else {
-            document.getElementById("errorMessage").innerText =
-                "Fallo en la autenticación";
+            let msg = "Fallo en la autenticación";
+            try {
+                const errData = await response.json();
+                msg = errData.detail || msg;
+            } catch (_) {}
+            document.getElementById("errorMessage").innerText = msg;
+            console.error("Login fallido:", msg);
             }
         } catch (err) {
             console.error("Error:", err);

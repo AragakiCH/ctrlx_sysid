@@ -30,14 +30,12 @@ class OpcUaSessionService:
         self._last_login_ts: Optional[float] = None
 
     def _validate_connection(self, url: str, user: str, password: str) -> None:
-        """
-        Valida que las credenciales y el endpoint realmente sirvan
-        antes de arrancar el reader.
-        """
         opc = CtrlxOpcUaClient(url=url, user=user, password=password)
 
         try:
+            print(f"[LOGIN] Probando OPC UA url={url} user={user}")
             opc.connect()
+            print("[LOGIN] OPC UA connect OK")
 
             root = opc.get_root_node()
             plc_prg = opc.browse_by_names(
@@ -57,6 +55,11 @@ class OpcUaSessionService:
                     "Revisa Symbol Configuration o la ruta del árbol OPC UA."
                 )
 
+            print("[LOGIN] PLC_PRG encontrado OK")
+
+        except Exception as exc:
+            print(f"[LOGIN] ERROR REAL: {exc}")
+            raise
         finally:
             opc.disconnect()
 
