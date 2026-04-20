@@ -93,3 +93,17 @@ body {
     margin-top: 15px;
     text-align: center;
 }
+
+.toggle-eye {
+    position: absolute;
+    right: 15px; /* Ajusta según tu diseño */
+    top: 50%;
+    transform: translateY(-50%);
+    cursor: pointer;
+    color: #666; /* Un color gris técnico */
+    font-size: 18px;
+}
+
+.toggle-eye:hover {
+    color: #000; /* Se oscurece al pasar el mouse */
+}
