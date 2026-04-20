@@ -10,6 +10,43 @@ from infrastructure.ctrlx.opcua_client import CtrlxOpcUaClient
 
 
 class PLCReader:
+    SIGNAL_ALIASES = {
+        "time": [
+            "rTimeSec",
+            "rTiempoSeg",
+            "arrTimeSec",
+            "time",
+            "tiempo",
+        ],
+        "actuator": [
+            "rActuator",
+            "AO_Actuador_mA",
+            "AO_Actuador",
+            "actuator",
+            "actuador",
+        ],
+        "sensor": [
+            "rSensor",
+            "AI_Sensor_mA",
+            "AI_Sensor",
+            "sensor",
+            "sensor_ai",
+        ],
+        "setpoint": [
+            "rSetPoint",
+            "SP_mA",
+            "SP",
+            "setpoint",
+            "set_point",
+        ],
+        "signal_type": [
+            "uiSignalType",
+            "signal_type",
+            "uiTipoSenal",
+            "tipo_senal",
+        ],
+    }
+        
     def __init__(
         self,
         url: str,
@@ -34,6 +71,30 @@ class PLCReader:
             return ua.VariantType(node.get_data_type_as_variant_type()).name
         except Exception:
             return "UNKNOWN"
+    
+    @staticmethod
+    def _normalize_name(name: str) -> str:
+        return (
+            (name or "")
+            .strip()
+            .lower()
+            .replace(" ", "")
+            .replace("-", "")
+        )
+    
+    @classmethod
+    def _pick_value(cls, raw_values: dict, aliases: list[str]):
+        normalized_map = {
+            cls._normalize_name(k): v
+            for k, v in raw_values.items()
+        }
+
+        for alias in aliases:
+            key = cls._normalize_name(alias)
+            if key in normalized_map:
+                return normalized_map[key]
+
+        return None
 
     def _build_sample(self, plc_prg_node) -> dict:
         children = plc_prg_node.get_children()
@@ -46,15 +107,17 @@ class PLCReader:
             except Exception as exc:
                 raw_values[name] = f"READ_ERROR: {exc}"
 
-        return {
+        sample = {
             "timestamp": time.time(),
-            "time": raw_values.get("rTimeSec"),
-            "actuator": raw_values.get("rActuator"),
-            "sensor": raw_values.get("rSensor"),
-            "setpoint": raw_values.get("rSetPoint"),
-            "signal_type": raw_values.get("uiSignalType"),
+            "time": self._pick_value(raw_values, self.SIGNAL_ALIASES["time"]),
+            "actuator": self._pick_value(raw_values, self.SIGNAL_ALIASES["actuator"]),
+            "sensor": self._pick_value(raw_values, self.SIGNAL_ALIASES["sensor"]),
+            "setpoint": self._pick_value(raw_values, self.SIGNAL_ALIASES["setpoint"]),
+            "signal_type": self._pick_value(raw_values, self.SIGNAL_ALIASES["signal_type"]),
             "raw": raw_values,
         }
+
+        return sample
 
     def _resolve_plc_prg_node(self):
         root = self._opc.get_root_node()

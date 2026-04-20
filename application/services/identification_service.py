@@ -38,11 +38,13 @@ class IdentificationService:
         actuator_data: list[float],
         sensor_data: list[float],
     ) -> IdentificationResult:
-        return self.sopdt_identifier.identify(
+        result = self.sopdt_identifier.identify(
             time_data=time_data,
             actuator_data=actuator_data,
             sensor_data=sensor_data,
         )
+        result.pid_tunings = self.controller_tuner.tune_sopdt(result.model)
+        return result
 
     def identify_integrating(
         self,

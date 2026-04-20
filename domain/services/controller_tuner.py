@@ -68,31 +68,76 @@ class ControllerTuner:
         )
 
         return tunings
-    
-    def tune_integrating(self, model: TransferFunctionModel) -> list[PIDTuning]:
-            if model.model_type != "integrating":
-                return []
 
-            k = model.gain
-            dead_time = model.dead_time
+    def tune_sopdt(self, model: TransferFunctionModel) -> list[PIDTuning]:
+        if model.model_type != "sopdt":
+            return []
 
-            if abs(k) < 1e-9:
-                return []
+        k = model.gain
+        tau1 = model.tau1 or 0.0
+        tau2 = model.tau2 or 0.0
+        dead_time = model.dead_time
 
-            tunings: list[PIDTuning] = []
+        if abs(k) < 1e-9:
+            return []
 
-            lam = max(dead_time * 2.0, 1.0)
-            kp = 1.0 / (k * (lam + dead_time))
-            ti = 4.0 * (lam + dead_time)
-            ki = kp / ti if ti > 1e-9 else 0.0
+        if tau1 <= 1e-9 and tau2 <= 1e-9:
+            return []
 
-            tunings.append(
+        # Equivalencia simple SOPDT -> FOPDT
+        tau_eq = max(tau1 + tau2, 1e-6)
+
+        fopdt_equivalent = TransferFunctionModel(
+            model_type="fopdt",
+            gain=k,
+            tau=tau_eq,
+            dead_time=dead_time,
+            tf_string=(
+                f"SOPDT equivalente: K={k:.4f}, "
+                f"tau_eq={tau_eq:.4f}, L={dead_time:.4f}"
+            ),
+        )
+
+        tunings = self.tune_fopdt(fopdt_equivalent)
+
+        # Renombrar métodos para que en la UI quede claro que vinieron del SOPDT
+        renamed: list[PIDTuning] = []
+        for tuning in tunings:
+            renamed.append(
                 PIDTuning(
-                    method="IMC-Integrating",
-                    kp=kp,
-                    ki=ki,
-                    kd=0.0,
+                    method=f"{tuning.method} (SOPDT eq.)",
+                    kp=tuning.kp,
+                    ki=tuning.ki,
+                    kd=tuning.kd,
                 )
             )
 
-            return tunings
+        return renamed
+
+    def tune_integrating(self, model: TransferFunctionModel) -> list[PIDTuning]:
+        if model.model_type != "integrating":
+            return []
+
+        k = model.gain
+        dead_time = model.dead_time
+
+        if abs(k) < 1e-9:
+            return []
+
+        tunings: list[PIDTuning] = []
+
+        lam = max(dead_time * 2.0, 1.0)
+        kp = 1.0 / (k * (lam + dead_time))
+        ti = 4.0 * (lam + dead_time)
+        ki = kp / ti if ti > 1e-9 else 0.0
+
+        tunings.append(
+            PIDTuning(
+                method="IMC-Integrating",
+                kp=kp,
+                ki=ki,
+                kd=0.0,
+            )
+        )
+
+        return tunings

@@ -1,0 +1,7 @@
+{
+  "schemaVersion": "1.0.0",
+  "id": "api-sysid",
+  "title": "Ctrlx Sysid",
+  "description": "Identificación de sistemas en ctrlX CORE",
+  "icon": "package-assets/api-sysid/icon.png"
+}

@@ -1,0 +1,22 @@
+{
+  "version": "1.0.0",
+  "license": "MIT",
+  "packageName": "api-sysid",
+  "description": "System identification app for ctrlX CORE",
+  "vendor": "PSI",
+  "author": "PSI",
+  "company": "PSI",
+  "keywords": ["ctrlX", "FastAPI", "System Identification", "OPC UA"],
+  "homepage": "https://example.com",
+  "icon": "package-assets/api-sysid/icon.png",
+  "menus": {
+    "sidebar": [
+      {
+        "id": "api-sysid",
+        "title": "Ctrlx Sysid",
+        "link": "http://${hostname}:8000/",
+        "target": "_blank"
+      }
+    ]
+  }
+}
