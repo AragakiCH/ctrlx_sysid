@@ -56,65 +56,57 @@
     </div>
 
     <script>
-      // --- LÓGICA PARA VER/OCULTAR CONTRASEÑA ---
-      const togglePassword = document.getElementById('togglePassword');
-      const passwordInput = document.getElementById('password');
+    const togglePassword = document.getElementById('togglePassword');
+    const passwordInput = document.getElementById('password');
 
-      togglePassword.addEventListener('click', function () {
-        // Cambiamos el tipo de atributo entre password y text
+    togglePassword.addEventListener('click', function () {
         const type = passwordInput.getAttribute('type') === 'password' ? 'text' : 'password';
         passwordInput.setAttribute('type', type);
-        
-        // Cambiamos la clase del icono entre ojo abierto y ojo tachado
         this.classList.toggle('fa-eye');
         this.classList.toggle('fa-eye-slash');
-      });
+    });
 
-      // --- LÓGICA DE ENVÍO DE FORMULARIO ---
-      document
+    document
         .getElementById("loginForm")
         .addEventListener("submit", async (e) => {
-          e.preventDefault();
+        e.preventDefault();
 
-          const ip = document
+        const ip = document
             .getElementById("ip")
             .value.trim()
             .replace(/\s+/g, "");
-          const user = document.getElementById("user").value.trim();
-          const pass = document.getElementById("password").value.trim();
+        const user = document.getElementById("user").value.trim();
+        const pass = document.getElementById("password").value.trim();
 
-          const fullUrl = `opc.tcp://${ip}:4840`;
+        const fullUrl = `opc.tcp://${ip}:4840`;
 
-          const payload = {
+        const payload = {
             user: user,
             password: pass,
             url: fullUrl,
-          };
+        };
 
-          try {
-            const response = await fetch(
-              "http://localhost:8000/api/opcua/login",
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(payload),
-              },
-            );
-            
+        try {
+            const response = await fetch("/api/opcua/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            });
+
             console.log("Datos enviados:", payload);
 
             if (response.ok) {
-              localStorage.setItem("isAuth", "true");
-              window.location.href = "/app";
+            localStorage.setItem("isAuth", "true");
+            window.location.href = "/app";
             } else {
-              document.getElementById("errorMessage").innerText =
+            document.getElementById("errorMessage").innerText =
                 "Fallo en la autenticación";
             }
-          } catch (err) {
+        } catch (err) {
             console.error("Error:", err);
             document.getElementById("errorMessage").innerText =
-                "Error de conexión con el servidor";
-          }
+            "Error de conexión con el servidor";
+        }
         });
     </script>
   </body>
