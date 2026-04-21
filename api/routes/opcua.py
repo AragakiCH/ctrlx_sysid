@@ -15,7 +15,12 @@ class OpcUaLoginRequest(BaseModel):
     user: str
     password: str
     url: str
+    program_name: str
 
+class OpcUaDiscoverProgramsRequest(BaseModel):
+    user: str
+    password: str
+    url: str
 
 class OpcUaDiscoverItem(BaseModel):
     url: str
@@ -115,11 +120,28 @@ def opcua_login(body: OpcUaLoginRequest, request: Request) -> dict:
             url=body.url,
             user=body.user,
             password=body.password,
+            program_name=body.program_name,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=401, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/discover-programs")
+def discover_programs(body: OpcUaDiscoverProgramsRequest, request: Request) -> dict:
+    session_service = request.app.state.opcua_session_service
+
+    try:
+        return session_service.discover_programs(
+            url=body.url,
+            user=body.user,
+            password=body.password,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.post("/logout")

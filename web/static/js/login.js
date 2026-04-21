@@ -2,110 +2,156 @@
 
 document.addEventListener("DOMContentLoaded", () => {
   const ipSelect = document.getElementById("ipSelect");
-  const ipHiddenInput = document.getElementById("ip");
+  const programSelect = document.getElementById("programSelect");
+  const userInput = document.getElementById("user");
+  const passwordInput = document.getElementById("password");
+  const btnDiscover = document.getElementById("btnDiscoverPrograms");
   const loginForm = document.getElementById("loginForm");
   const errorDiv = document.getElementById("errorMessage");
   const errorText = document.getElementById("errorText");
 
-  // --- 1. FUNCIÓN PARA DESCUBRIR HOSTS ---
-  const discoverHosts = async () => {
-    try {
-      const response = await fetch("http://localhost:8000/api/opcua/discover");
-      const devices = await response.json();
-
-      // Limpiamos el select
-      ipSelect.innerHTML = "";
-
-      if (devices.length === 0) {
-        ipSelect.innerHTML =
-          '<option value="">No se encontraron dispositivos</option>';
-        return;
-      }
-
-      // ... dentro de la función discoverHosts ...
-      devices.forEach((device) => {
-        const option = document.createElement("option");
-        option.value = device.url;
-
-        // Usamos texto más limpio. El estado lo manejaremos con el color en el CSS
-        const statusText = device.tcp_ok ? "● Online" : "● Offline";
-        option.textContent = `${device.host} ${statusText}`;
-
-        // Si no hay conexión, lo ponemos en gris
-        if (!device.tcp_ok) {
-          option.style.color = "#888";
-        } else {
-          option.style.color = "#28a745"; // Color verde éxito
-        }
-
-        ipSelect.appendChild(option);
-      });
-
-      // Seteamos el primer valor en el hidden input por defecto
-      ipHiddenInput.value = ipSelect.value;
-    } catch (err) {
-      console.error("Error descubriendo hosts:", err);
-      ipSelect.innerHTML =
-        '<option value="">Error al cargar dispositivos</option>';
+  // --- 1. FUNCIÓN PARA DESCUBRIR HOSTS AL INICIO ---
+  // --- 1. FUNCIÓN PARA DESCUBRIR HOSTS AL INICIO ---
+const discoverHosts = async () => {
+  try {
+    const response = await fetch("http://localhost:8000/api/opcua/discover");
+    const devices = await response.json();
+    ipSelect.innerHTML = "";
+    
+    if (devices.length === 0) {
+      ipSelect.innerHTML = '<option value="">No hay dispositivos</option>';
+      return;
     }
-  };
 
-  // Ejecutar al cargar
+    devices.forEach((d) => {
+      const opt = document.createElement("option");
+      opt.value = d.url;
+      
+      // Usamos el punto sólido que ya tenías
+      opt.textContent = `${d.host} ●`;
+      
+      // Aplicamos el color según el estado
+      if (d.tcp_ok) {
+        opt.style.color = "#28a745"; // Verde Rexroth/Industrial
+        opt.style.fontWeight = "bold";
+      } else {
+        opt.style.color = "#888888"; // Gris para desconectado
+      }
+      
+      ipSelect.appendChild(opt);
+    });
+  } catch (err) {
+    console.error("Error hosts:", err);
+  }
+};
+
   discoverHosts();
 
-  // Actualizar el input hidden cuando el usuario cambie de host
-  ipSelect.addEventListener("change", (e) => {
-    ipHiddenInput.value = e.target.value;
+  // --- 2. BOTÓN PARA OBTENER PROGRAMAS (PRIMER POST) ---
+  btnDiscover.addEventListener("click", async () => {
+    const url = ipSelect.value;
+    const user = userInput.value.trim();
+    const password = passwordInput.value.trim();
+
+    if (!url || !user || !password) {
+      errorText.innerText =
+        "Complete IP, Usuario y Clave para buscar programas.";
+      errorDiv.style.display = "flex";
+      return;
+    }
+
+    programSelect.innerHTML = '<option value="">Buscando...</option>';
+    errorDiv.style.display = "none";
+
+    try {
+      // POST para obtener programas
+      const response = await fetch(
+        "http://localhost:8000/api/opcua/discover-programs",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url, user, password }),
+        },
+      );
+
+      const data = await response.json();
+      programSelect.innerHTML = "";
+
+      // ... dentro de la lógica del btnDiscover.addEventListener ...
+
+      if (data.ok && Array.isArray(data.programs) && data.programs.length > 0) {
+        data.programs.forEach((prog) => {
+          const opt = document.createElement("option");
+          opt.value = prog;
+          opt.textContent = prog;
+          programSelect.appendChild(opt);
+        });
+
+        // Eliminamos el botón
+        btnDiscover.remove();
+
+        // OPCIONAL: Reforzamos el ancho por JS por si las moscas
+        programSelect.style.width = "100%";
+      } else {
+        programSelect.innerHTML =
+          '<option value="">No se hallaron programas</option>';
+        errorText.innerText = "Credenciales incorrectas o no hay programas.";
+        errorDiv.style.display = "flex";
+      }
+    } catch (err) {
+      programSelect.innerHTML = '<option value="">Error</option>';
+      errorText.innerText = "Error de conexión al buscar programas.";
+      errorDiv.style.display = "flex";
+    }
   });
 
-  // --- 2. LÓGICA PARA VER/OCULTAR CONTRASEÑA ---
-  const togglePassword = document.getElementById("togglePassword");
-  const passwordInput = document.getElementById("password");
+  // --- 3. LOGIN FINAL (SEGUNDO POST) ---
+  loginForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const programName = programSelect.value;
 
-  if (togglePassword && passwordInput) {
+    if (!programName || programName.includes("...")) {
+      errorText.innerText = "Primero obtenga y seleccione un programa.";
+      errorDiv.style.display = "flex";
+      return;
+    }
+
+    const payload = {
+      user: userInput.value.trim(),
+      password: passwordInput.value.trim(),
+      url: ipSelect.value,
+      program_name: programName,
+    };
+
+    try {
+      const response = await fetch("http://localhost:8000/api/opcua/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (response.ok) {
+        localStorage.setItem("isAuth", "true");
+        window.location.href = "/app";
+      } else {
+        errorText.innerText = "Error en el inicio de sesión final.";
+        errorDiv.style.display = "flex";
+      }
+    } catch (err) {
+      errorText.innerText = "Error de servidor.";
+      errorDiv.style.display = "flex";
+    }
+  });
+
+  // Lógica de ver/ocultar password (opcional por si se te pasó)
+  const togglePassword = document.getElementById("togglePassword");
+  if (togglePassword) {
     togglePassword.addEventListener("click", function () {
       const type =
         passwordInput.getAttribute("type") === "password" ? "text" : "password";
       passwordInput.setAttribute("type", type);
       this.classList.toggle("fa-eye");
       this.classList.toggle("fa-eye-slash");
-    });
-  }
-
-  // --- 3. LÓGICA DE ENVÍO DE FORMULARIO ---
-  if (loginForm) {
-    loginForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-
-      // Ahora el "fullUrl" es directamente el value del select
-      const fullUrl = ipSelect.value;
-      const user = document.getElementById("user").value.trim();
-      const pass = document.getElementById("password").value.trim();
-
-      const payload = {
-        user: user,
-        password: pass,
-        url: fullUrl, // Ya viene como opc.tcp://192.168.1.1:4840
-      };
-
-      try {
-        const response = await fetch("http://localhost:8000/api/opcua/login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-
-        if (response.ok) {
-          localStorage.setItem("isAuth", "true");
-          window.location.href = "/app";
-        } else {
-          errorText.innerText = "Usuario o contraseña incorrectos";
-          errorDiv.style.display = "flex";
-        }
-      } catch (err) {
-        errorText.innerText = "Error de conexión con el servidor";
-        errorDiv.style.display = "flex";
-      }
     });
   }
 });

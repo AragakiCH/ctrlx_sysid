@@ -52,6 +52,7 @@ class PLCReader:
         url: str,
         user: str,
         password: str,
+        program_name: str,
         on_sample: Optional[Callable[[dict], None]] = None,
         period_s: float = 0.1,
     ) -> None:
@@ -59,8 +60,8 @@ class PLCReader:
         self.user = user
         self.password = password
         self.period_s = period_s
+        self.program_name = program_name
         self.on_sample = on_sample
-
         self._stop = False
         self._thread: Optional[threading.Thread] = None
         self._opc = CtrlxOpcUaClient(url=url, user=user, password=password)
@@ -119,10 +120,10 @@ class PLCReader:
 
         return sample
 
-    def _resolve_plc_prg_node(self):
+    def _resolve_program_node(self):
         root = self._opc.get_root_node()
 
-        plc_prg = self._opc.browse_by_names(
+        program_node = self._opc.browse_by_names(
             root,
             "Objects",
             "Datalayer",
@@ -130,9 +131,9 @@ class PLCReader:
             "app",
             "Application",
             "sym",
-            "PLC_PRG",
+            self.program_name,
         )
-        return plc_prg
+        return program_node
 
     def _run(self) -> None:
         backoff = 1.0
@@ -143,14 +144,14 @@ class PLCReader:
                 self._opc.connect()
                 backoff = 1.0
 
-                plc_prg_node = self._resolve_plc_prg_node()
-                if plc_prg_node is None:
+                program_node = self._resolve_program_node()
+                if program_node is None:
                     raise RuntimeError(
-                        "No se encontró PLC_PRG. Publica el proyecto desde Symbol Configuration."
+                        f"No se encontró el programa '{self.program_name}' dentro de 'sym'."
                     )
 
                 while not self._stop:
-                    sample = self._build_sample(plc_prg_node)
+                    sample = self._build_sample(program_node)
 
                     if self.on_sample:
                         try:

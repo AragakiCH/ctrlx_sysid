@@ -5,45 +5,66 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ctrlX Login | System ID</title>
     <link rel="stylesheet" href="../static/css/login.css" />
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
-    
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css"
+    />
   </head>
-  <div class="login-container">
-    <div class="login-box">
+  <body>
+    <div class="login-container">
+      <div class="login-box">
         <h1 class="login-title">Login</h1>
-        
-        <form id="loginForm">
-        <div class="input-group">
-            <label for="ip">Dispositivo (Host)*</label>
-            <select id="ipSelect" required>
-                <option value="">Cargando dispositivos...</option>
-            </select>
-            <input type="hidden" id="ip" />
-        </div>
 
-        <div class="input-group">
+        <form id="loginForm">
+          <div class="input-group">
+            <label for="ipSelect">Dispositivo (Host)*</label>
+            <select id="ipSelect" required>
+              <option value="">Cargando dispositivos...</option>
+            </select>
+          </div>
+
+          <div class="input-group">
             <label for="user">Username*</label>
             <input type="text" id="user" value="boschrexroth" required />
-        </div>
+          </div>
 
-        <div class="input-group">
+          <div class="input-group">
             <label for="password">Password*</label>
             <div class="password-wrapper">
-            <input type="password" id="password" required />
-            <i id="togglePassword" class="fa-regular fa-eye toggle-eye"></i>
+              <input type="password" id="password" required />
+              <i id="togglePassword" class="fa-regular fa-eye toggle-eye"></i>
             </div>
-        </div>
+          </div>
 
-        <div id="errorMessage" class="error-banner" style="display: none;">
+          <div class="input-group">
+            <label for="programSelect">Programa*</label>
+            <div
+              class="program-controls"
+              style="display: flex; gap: 10px; align-items: center"
+            >
+              <select id="programSelect" required style="flex-grow: 1">
+                <option value="">Primero obtenga programas...</option>
+              </select>
+              <button
+                type="button"
+                id="btnDiscoverPrograms"
+                class="btn-secondary"
+              >
+                <i class="fa-solid fa-magnifying-glass"></i>
+              </button>
+            </div>
+          </div>
+
+          <div id="errorMessage" class="error-banner" style="display: none">
             <i class="fa-solid fa-circle-exclamation"></i>
-            <span id="errorText">Please enter your password.</span>
-        </div>
+            <span id="errorText">Error</span>
+          </div>
 
-        <div class="button-container">
+          <div class="button-container">
             <button type="submit" class="btn-login">Log in</button>
-        </div>
+          </div>
         </form>
-    </div>
+      </div>
     </div>
     <script src="../static/js/login.js"></script>
   </body>
