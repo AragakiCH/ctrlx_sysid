@@ -28,9 +28,9 @@ body {
 .login-box {
     background: white; 
     padding: 40px;
-    width: 100%;
-    max-width: 400px; 
+    width: 400px; /* Cambia max-width por width fijo para que no baile */
     box-shadow: 0 10px 25px rgba(0,0,0,0.3); 
+    box-sizing: border-box; /* Para que el padding no sume al ancho */
 }
 
 .login-title {
@@ -93,8 +93,9 @@ body {
 }
 
 /* Flecha personalizada usando Font Awesome (Arrow Down) */
-.input-group:has(select)::after {
-    content: '\f078'; /* fa-chevron-down */
+/* Modifica esta parte en tu login.css */
+.input-group:has(select):not(:has(#btnDiscoverPrograms))::after {
+    content: '\f078'; 
     font-family: 'Font Awesome 6 Free';
     font-weight: 900;
     position: absolute;
@@ -102,7 +103,7 @@ body {
     top: 50%;
     transform: translateY(-50%);
     font-size: 12px;
-    color: var(--rex-blue); /* Flecha azul Rexroth */
+    color: var(--rex-blue);
     pointer-events: none;
 }
 
@@ -117,6 +118,39 @@ select option {
     color: #333;
     padding: 12px;
     font-size: 14px;
+}
+
+/* Estilo para el botón de la lupa para que no flote feo */
+.btn-secondary {
+    background-color: var(--rex-blue); /* Ponlo azul para que haga juego */
+    color: white;
+    border: none;
+    height: 35px;
+    width: 40px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    border-radius: 2px;
+}
+
+.btn-secondary:hover {
+    background-color: var(--rex-blue);
+}
+
+/* Asegura que el contenedor de los controles siempre ocupe todo el ancho */
+.program-controls {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    width: 100%; /* Obliga a ocupar todo el grupo */
+}
+
+/* Asegura que el select crezca siempre */
+#programSelect {
+    flex: 1; /* Esto hace que el select use todo el espacio sobrante */
+    width: 100%;
+    min-width: 0; /* Evita que el select desborde en flexbox */
 }
 
 .password-wrapper {
