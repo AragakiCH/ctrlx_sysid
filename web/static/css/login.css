@@ -1,85 +1,162 @@
 /* web/static/css/login.css */
 :root {
-    --bg-dark: #2b2b2b;
-    --bg-light: #eff1f2;
-    --accent: #007bc0; /* El azul de ctrlX */
-    --text-main: #202529;
-    --border: #d1d7dd;
+    --rex-blue: #007bc0;
+    --rex-light-gray: #dfe3e6;
+    --rex-label-gray: #525f6b;
+    --rex-error-bg: #fde2e2;
+    --rex-error-text: #333;
 }
 
 body {
     margin: 0;
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background-color: var(--bg-light);
+    
+    /* TU IMAGEN DE FONDO SE QUEDA AQUÍ */
+    background-image: url('../img/fondo_plc.jpg'); 
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: cover;
+    background-attachment: fixed;
+    
     display: flex;
     justify-content: center;
     align-items: center;
     height: 100vh;
 }
 
-.login-container {
-    width: 100%;
-    max-width: 400px;
-    padding: 20px;
-}
 
 .login-box {
-    background: white;
+    background: white; 
     padding: 40px;
-    border-radius: 2px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-    border-top: 4px solid var(--accent);
+    width: 100%;
+    max-width: 400px; 
+    box-shadow: 0 10px 25px rgba(0,0,0,0.3); 
 }
 
-.login-header {
-    font-size: 24px;
+.login-title {
+    color: var(--rex-blue);
+    font-size: 32px;
     font-weight: bold;
-    margin-bottom: 5px;
-}
-
-.brand { color: var(--text-main); }
-.sub-brand { color: var(--accent); }
-
-.login-subtitle {
-    color: #666;
-    font-size: 14px;
-    margin-bottom: 30px;
+    margin-top: 0;
+    margin-bottom: 25px;
 }
 
 .input-group {
-    margin-bottom: 20px;
+    background-color: var(--rex-light-gray);
+    padding: 12px 16px; 
+    margin-bottom: 20px; 
+    border-bottom: 2px solid var(--rex-label-gray);
+    transition: all 0.3s ease;
+}
+
+.input-group:focus-within {
+    border-bottom-color: var(--rex-blue); 
 }
 
 .input-group label {
     display: block;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
-    margin-bottom: 5px;
-    color: var(--text-main);
+    color: var(--rex-label-gray);
+    margin-bottom: 5px; 
 }
 
 .input-group input {
     width: 100%;
-    padding: 10px;
-    border: 1px solid var(--border);
+    border: none;
+    background: transparent;
+    font-size: 16px;
     outline: none;
-    box-sizing: border-box;
-    transition: border 0.3s;
+    padding: 4px 0; 
 }
 
-.input-group input:focus {
-    border-color: var(--accent);
+/* Estilo para el SELECT (Desplegable) */
+.input-group select {
+    width: 100%;
+    border: none;
+    background: transparent;
+    font-size: 16px;
+    font-weight: 500;
+    outline: none;
+    padding: 8px 0; /* Un poco más de espacio */
+    cursor: pointer;
+    color: #333;
+    font-family: inherit;
+    appearance: none;
+    -webkit-appearance: none;
+    position: relative;
+    z-index: 1;
+}
+
+.input-group:has(select) {
+    position: relative;
+}
+
+/* Flecha personalizada usando Font Awesome (Arrow Down) */
+.input-group:has(select)::after {
+    content: '\f078'; /* fa-chevron-down */
+    font-family: 'Font Awesome 6 Free';
+    font-weight: 900;
+    position: absolute;
+    right: 15px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 12px;
+    color: var(--rex-blue); /* Flecha azul Rexroth */
+    pointer-events: none;
+}
+
+/* Hover en el grupo de entrada */
+.input-group:hover {
+    background-color: #f0f2f5;
+    border-bottom-color: #abb3ba;
+}
+/* Estilo de la lista desplegable (lo que el SO permite) */
+select option {
+    background-color: #fff;
+    color: #333;
+    padding: 12px;
+    font-size: 14px;
+}
+
+.password-wrapper {
+        position: relative;
+        display: flex;
+        align-items: center;
+      }
+
+
+.error-banner {
+    background-color: var(--rex-error-bg);
+    color: var(--rex-error-text);
+    padding: 10px 15px;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: -10px; 
+    margin-bottom: 20px;
+}
+
+.error-banner i {
+    font-size: 16px;
+}
+
+
+.button-container {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 20px;
 }
 
 .btn-login {
-    width: 100%;
-    padding: 12px;
-    background-color: var(--accent);
+    background-color: var(--rex-blue);
     color: white;
     border: none;
-    font-weight: bold;
+    padding: 10px 25px;
+    font-size: 16px;
+    font-weight: 600;
     cursor: pointer;
-    margin-top: 10px;
     transition: background 0.3s;
 }
 
@@ -96,14 +173,14 @@ body {
 
 .toggle-eye {
     position: absolute;
-    right: 15px; /* Ajusta según tu diseño */
+    right: 15px; 
     top: 50%;
     transform: translateY(-50%);
     cursor: pointer;
-    color: #666; /* Un color gris técnico */
+    color: #666;
     font-size: 18px;
 }
 
 .toggle-eye:hover {
-    color: #000; /* Se oscurece al pasar el mouse */
+    color: #000; 
 }
