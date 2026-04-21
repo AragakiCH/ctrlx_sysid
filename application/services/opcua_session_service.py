@@ -25,11 +25,18 @@ class OpcUaSessionService:
         self._current_url: Optional[str] = None
         self._current_user: Optional[str] = None
         self._current_password: Optional[str] = None
+        self._current_program_name: Optional[str] = None
 
         self._last_error: Optional[str] = None
         self._last_login_ts: Optional[float] = None
 
-    def _validate_connection(self, url: str, user: str, password: str) -> str:
+    def _validate_connection(
+        self,
+        url: str,
+        user: str,
+        password: str,
+        program_name: str,
+    ) -> None:
         opc = CtrlxOpcUaClient(url=url, user=user, password=password)
 
         try:
@@ -39,7 +46,43 @@ class OpcUaSessionService:
 
             root = opc.get_root_node()
 
-            # Llegar hasta el nodo sym
+            program_node = opc.browse_by_names(
+                root,
+                "Objects",
+                "Datalayer",
+                "plc",
+                "app",
+                "Application",
+                "sym",
+                program_name,
+            )
+
+            if program_node is None:
+                raise RuntimeError(
+                    f"Conectó al OPC UA, pero no se encontró el programa '{program_name}' dentro de 'sym'."
+                )
+
+            print(f"[LOGIN] Programa '{program_name}' encontrado OK")
+
+        except Exception as exc:
+            print(f"[LOGIN] ERROR REAL: {exc}")
+            raise
+        finally:
+            try:
+                opc.disconnect()
+            except Exception as exc:
+                print(f"[LOGIN] Error al desconectar OPC UA: {exc}")
+
+    def _discover_programs(self, url: str, user: str, password: str) -> list[str]:
+        opc = CtrlxOpcUaClient(url=url, user=user, password=password)
+
+        try:
+            print(f"[DISCOVER] Probando OPC UA url={url} user={user}")
+            opc.connect()
+            print("[DISCOVER] OPC UA connect OK")
+
+            root = opc.get_root_node()
+
             sym_node = opc.browse_by_names(
                 root,
                 "Objects",
@@ -52,81 +95,105 @@ class OpcUaSessionService:
 
             if sym_node is None:
                 raise RuntimeError(
-                    "Conectó al OPC UA, pero no se encontró el nodo 'sym'. "
-                    "Revisa Symbol Configuration o la ruta del árbol OPC UA."
+                    "Conectó al OPC UA, pero no se encontró el nodo 'sym'."
                 )
 
-            print("[LOGIN] Nodo sym encontrado OK")
-
-            # Obtener hijos de sym (programas IEC expuestos)
             children = sym_node.get_children()
             if not children:
                 raise RuntimeError(
                     "Conectó al OPC UA, pero el nodo 'sym' no tiene programas expuestos."
                 )
 
-            print(f"[LOGIN] Hijos detectados en sym: {len(children)}")
-
-            named_children = []
+            programs = []
             for child in children:
                 try:
                     browse_name = child.get_browse_name().Name
-                    named_children.append((browse_name, child))
-                    print(f"[LOGIN] Programa detectado en sym: {browse_name}")
+                    if browse_name:
+                        programs.append(browse_name)
+                        print(f"[DISCOVER] Programa encontrado: {browse_name}")
                 except Exception as exc:
-                    print(f"[LOGIN] No se pudo leer browse_name de un hijo: {exc}")
+                    print(f"[DISCOVER] No se pudo leer browse_name de un hijo: {exc}")
 
-            if not named_children:
+            if not programs:
                 raise RuntimeError(
-                    "Conectó al OPC UA, pero no se pudo obtener el nombre de los programas dentro de 'sym'."
+                    "Se encontró el nodo 'sym', pero no se pudieron identificar programas válidos."
                 )
 
-            # Nombres preferidos conocidos
-            preferred_names = ["PLC_PRG", "PRG_Main"]
-
-            selected_program_name = None
-            selected_program_node = None
-
-            for preferred in preferred_names:
-                for name, child in named_children:
-                    if name == preferred:
-                        selected_program_name = name
-                        selected_program_node = child
-                        break
-                if selected_program_node is not None:
-                    break
-
-            # Si no encuentra uno conocido, toma el primero disponible
-            if selected_program_node is None:
-                selected_program_name, selected_program_node = named_children[0]
-                print(
-                    f"[LOGIN] No se encontró un nombre preferido. "
-                    f"Se usará el primer programa disponible: {selected_program_name}"
-                )
-            else:
-                print(f"[LOGIN] Programa preferido encontrado: {selected_program_name}")
-
-            # Validación final simple
-            if selected_program_node is None:
-                raise RuntimeError(
-                    "Conectó al OPC UA, pero no se pudo determinar un programa válido dentro de 'sym'."
-                )
-
-            print(f"[LOGIN] Programa seleccionado: {selected_program_name}")
-
-            return selected_program_name
+            return programs
 
         except Exception as exc:
-            print(f"[LOGIN] ERROR REAL: {exc}")
+            print(f"[DISCOVER] ERROR REAL: {exc}")
             raise
 
         finally:
             try:
                 opc.disconnect()
             except Exception as exc:
-                print(f"[LOGIN] Error al desconectar OPC UA: {exc}")
+                print(f"[DISCOVER] Error al desconectar OPC UA: {exc}")
 
-    def login(self, url: str, user: str, password: str) -> dict:
+
+
+
+    def login(self, url: str, user: str, password: str, program_name: str) -> dict:
+        clean_url = (url or "").strip()
+        clean_user = (user or "").strip()
+        clean_password = password or ""
+        clean_program_name = (program_name or "").strip()
+
+        if not clean_url:
+            raise ValueError("Falta la URL OPC UA.")
+        if not clean_user:
+            raise ValueError("Falta el usuario OPC UA.")
+        if not clean_password:
+            raise ValueError("Falta la contraseña OPC UA.")
+        if not clean_program_name:
+            raise ValueError("Falta seleccionar el programa OPC UA.")
+
+        self._validate_connection(
+            url=clean_url,
+            user=clean_user,
+            password=clean_password,
+            program_name=clean_program_name,
+        )
+
+        with self._lock:
+            if self._reader is not None:
+                try:
+                    self._reader.stop()
+                except Exception:
+                    pass
+                finally:
+                    self._reader = None
+
+            if self._reset_runtime_state is not None:
+                self._reset_runtime_state()
+
+            self._current_url = clean_url
+            self._current_user = clean_user
+            self._current_password = clean_password
+            self._current_program_name = clean_program_name
+            self._last_error = None
+            self._last_login_ts = time.time()
+
+            self._reader = PLCReader(
+                url=clean_url,
+                user=clean_user,
+                password=clean_password,
+                program_name=clean_program_name,
+                on_sample=self._on_sample,
+                period_s=self._period_s,
+            )
+            self._reader.start()
+
+            return {
+                "ok": True,
+                "url": self._current_url,
+                "user": self._current_user,
+                "program_name": self._current_program_name,
+                "started": True,
+            }
+        
+    def discover_programs(self, url: str, user: str, password: str) -> dict:
         clean_url = (url or "").strip()
         clean_user = (user or "").strip()
         clean_password = password or ""
@@ -138,48 +205,18 @@ class OpcUaSessionService:
         if not clean_password:
             raise ValueError("Falta la contraseña OPC UA.")
 
-        # Primero valida conexión real
-        self._validate_connection(
+        programs = self._discover_programs(
             url=clean_url,
             user=clean_user,
             password=clean_password,
         )
 
-        with self._lock:
-            # Detener reader anterior si existía
-            if self._reader is not None:
-                try:
-                    self._reader.stop()
-                except Exception:
-                    pass
-                finally:
-                    self._reader = None
-
-            # Limpiar buffer/resultados viejos para no mezclar sesiones
-            if self._reset_runtime_state is not None:
-                self._reset_runtime_state()
-
-            self._current_url = clean_url
-            self._current_user = clean_user
-            self._current_password = clean_password
-            self._last_error = None
-            self._last_login_ts = time.time()
-
-            self._reader = PLCReader(
-                url=clean_url,
-                user=clean_user,
-                password=clean_password,
-                on_sample=self._on_sample,
-                period_s=self._period_s,
-            )
-            self._reader.start()
-
-            return {
-                "ok": True,
-                "url": self._current_url,
-                "user": self._current_user,
-                "started": True,
-            }
+        return {
+            "ok": True,
+            "url": clean_url,
+            "user": clean_user,
+            "programs": programs,
+        }
 
     def logout(self, clear_runtime: bool = True) -> dict:
         with self._lock:
@@ -194,7 +231,9 @@ class OpcUaSessionService:
             self._current_url = None
             self._current_user = None
             self._current_password = None
+            self._current_program_name = None
             self._last_login_ts = None
+            
 
             if clear_runtime and self._reset_runtime_state is not None:
                 self._reset_runtime_state()
@@ -234,6 +273,7 @@ class OpcUaSessionService:
                 "has_identification": has_identification,
                 "last_error": self._last_error,
                 "last_login_ts": self._last_login_ts,
+                "program_name": self._current_program_name,
             }
 
     @property
