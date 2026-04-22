@@ -3,14 +3,39 @@ function getSignalUnit() {
   return sigType === "ma" ? "mA" : "%";
 }
 
+const crosshairPlugin = {
+  id: "crosshair",
+
+  afterDraw(chart) {
+    if (!chart.tooltip?._active?.length) return;
+
+    const ctx = chart.ctx;
+    const activePoint = chart.tooltip._active[0];
+    const x = activePoint.element.x;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(x, chart.chartArea.top);
+    ctx.lineTo(x, chart.chartArea.bottom);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "#999";
+    ctx.setLineDash([4, 4]);
+    ctx.stroke();
+    ctx.restore();
+  },
+};
+
 // ==================== RAW DATA ====================
 function plotRawData(time, actuator, sensor, setpoint = []) {
   const unit = getSignalUnit();
+  const signalType = document.getElementById("signalType")?.value;
+  const sensorColor = signalType === "percent" ? "#ff9800" : "#1a9e5c";
+  const actuatorColor = signalType === "percent" ? "#ff9800" : "#1a9e5c";
 
   const makeConfig = (label, data, color, yLabel, withSetpoint) => ({
     type: "line",
     data: {
-      labels: time.map(v => Number(v).toFixed(2)),
+      labels: time.map((v) => Number(v).toFixed(2)),
       datasets: [
         {
           label,
@@ -21,16 +46,20 @@ function plotRawData(time, actuator, sensor, setpoint = []) {
           tension: 0.12,
           fill: false,
         },
-        ...(withSetpoint && setpoint?.length ? [{
-          label: "Set Point",
-          data: setpoint,
-          borderColor: "#c47a00",
-          borderWidth: 1.5,
-          borderDash: [6, 4],
-          pointRadius: 0,
-          tension: 0,
-          fill: false,
-        }] : []),
+        ...(withSetpoint && setpoint?.length
+          ? [
+              {
+                label: "Set Point",
+                data: setpoint,
+                borderColor: "#c47a00",
+                borderWidth: 1.5,
+                borderDash: [6, 4],
+                pointRadius: 0,
+                tension: 0,
+                fill: false,
+              },
+            ]
+          : []),
       ],
     },
     options: {
@@ -38,51 +67,69 @@ function plotRawData(time, actuator, sensor, setpoint = []) {
       maintainAspectRatio: false,
       animation: { duration: 250 },
       plugins: {
-        legend: { display: false }
+        legend: { display: false },
       },
       scales: {
         x: {
           ticks: {
             color: "#7a8fa0",
             font: { family: "IBM Plex Mono", size: 9 },
-            maxTicksLimit: 10
+            maxTicksLimit: 10,
           },
           grid: { color: "rgba(160,180,200,0.25)" },
           title: {
             display: true,
             text: "Tiempo (s)",
             color: "#7a8fa0",
-            font: { family: "IBM Plex Sans", size: 9 }
+            font: { family: "IBM Plex Sans", size: 9 },
           },
         },
         y: {
           ticks: {
             color: "#7a8fa0",
-            font: { family: "IBM Plex Mono", size: 9 }
+            font: { family: "IBM Plex Mono", size: 9 },
           },
           grid: { color: "rgba(160,180,200,0.25)" },
           title: {
             display: true,
             text: yLabel,
             color: "#7a8fa0",
-            font: { family: "IBM Plex Sans", size: 9 }
+            font: { family: "IBM Plex Sans", size: 9 },
           },
         },
       },
     },
   });
 
-  if (window.State?.charts?.actuator) window.State.charts.actuator.destroy();
-  if (window.State?.charts?.sensor) window.State.charts.sensor.destroy();
+  // if (window.State?.charts?.actuator) window.State.charts.actuator.destroy();
+  // // if (window.State?.charts?.sensor) window.State.charts.sensor.destroy();
+
+  // if (window.State?.charts?.sensor) {
+  //   window.State.charts.sensor.destroy();
+  // }
+
+  // window.State.charts.sensor = new Chart(
+  //   document.getElementById("chartSensor"),
+  //   makeConfig("Sensor", sensor, sensorColor, `Sensor (${unit})`, false),
+  // );
+  // ACTUADOR
+  if (window.State?.charts?.actuator) {
+    window.State.charts.actuator.destroy();
+  }
 
   window.State.charts.actuator = new Chart(
     document.getElementById("chartActuator"),
-    makeConfig("Actuador", actuator, "#0078c8", `Actuador (${unit})`, true)
+    makeConfig("Actuador", actuator, actuatorColor, `Actuador (${unit})`, true)
   );
+
+  // SENSOR
+  if (window.State?.charts?.sensor) {
+    window.State.charts.sensor.destroy();
+  }
 
   window.State.charts.sensor = new Chart(
     document.getElementById("chartSensor"),
-    makeConfig("Sensor", sensor, "#1a9e5c", `Sensor (${unit})`, false)
+    makeConfig("Sensor", sensor, sensorColor, `Sensor (${unit})`, false),
   );
 }
 
@@ -110,47 +157,51 @@ function plotComparison(time, sensorMeasured, results) {
     })),
   ];
 
-  if (window.State?.charts?.comparison) window.State.charts.comparison.destroy();
+  if (window.State?.charts?.comparison)
+    window.State.charts.comparison.destroy();
 
-  window.State.charts.comparison = new Chart(document.getElementById("chartComparison"), {
-    type: "line",
-    data: {
-      labels: time.map(v => Number(v).toFixed(2)),
-      datasets
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: { duration: 350 },
-      plugins: {
-        legend: {
-          display: true,
-          labels: {
-            color: "#7a8fa0",
-            font: { family: "IBM Plex Sans", size: 9 },
-            boxWidth: 20
+  window.State.charts.comparison = new Chart(
+    document.getElementById("chartComparison"),
+    {
+      type: "line",
+      data: {
+        labels: time.map((v) => Number(v).toFixed(2)),
+        datasets,
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: { duration: 350 },
+        plugins: {
+          legend: {
+            display: true,
+            labels: {
+              color: "#7a8fa0",
+              font: { family: "IBM Plex Sans", size: 9 },
+              boxWidth: 20,
+            },
+          },
+        },
+        scales: {
+          x: {
+            ticks: {
+              color: "#7a8fa0",
+              font: { family: "IBM Plex Mono", size: 9 },
+              maxTicksLimit: 10,
+            },
+            grid: { color: "rgba(160,180,200,0.25)" },
+          },
+          y: {
+            ticks: {
+              color: "#7a8fa0",
+              font: { family: "IBM Plex Mono", size: 9 },
+            },
+            grid: { color: "rgba(160,180,200,0.25)" },
           },
         },
       },
-      scales: {
-        x: {
-          ticks: {
-            color: "#7a8fa0",
-            font: { family: "IBM Plex Mono", size: 9 },
-            maxTicksLimit: 10
-          },
-          grid: { color: "rgba(160,180,200,0.25)" }
-        },
-        y: {
-          ticks: {
-            color: "#7a8fa0",
-            font: { family: "IBM Plex Mono", size: 9 }
-          },
-          grid: { color: "rgba(160,180,200,0.25)" }
-        },
-      },
     },
-  });
+  );
 }
 
 // ==================== BODE ====================
@@ -178,19 +229,19 @@ function plotBode(result) {
       const denImag = w * tau;
       const denMag2 = denReal * denReal + denImag * denImag;
 
-      real = K * denReal / denMag2;
-      imag = -K * denImag / denMag2;
+      real = (K * denReal) / denMag2;
+      imag = (-K * denImag) / denMag2;
     } else if (modelType === "sopdt") {
       const tau1 = Number(result.tau1 ?? 1);
       const tau2 = Number(result.tau2 ?? 1);
 
       // G(jw)=K/((1+jw*t1)(1+jw*t2))
-      const a = 1 - (w * tau1) * (w * tau2);
+      const a = 1 - w * tau1 * (w * tau2);
       const b = w * (tau1 + tau2);
       const denMag2 = a * a + b * b;
 
-      real = K * a / denMag2;
-      imag = -K * b / denMag2;
+      real = (K * a) / denMag2;
+      imag = (-K * b) / denMag2;
     } else if (modelType === "integrating") {
       // G(jw)=K/(jw)
       real = 0;
@@ -201,8 +252,8 @@ function plotBode(result) {
     }
 
     const magnitude = Math.sqrt(real * real + imag * imag);
-    const phaseDegBase = Math.atan2(imag, real) * 180 / Math.PI;
-    const delayPhase = -(w * L) * 180 / Math.PI;
+    const phaseDegBase = (Math.atan2(imag, real) * 180) / Math.PI;
+    const delayPhase = (-(w * L) * 180) / Math.PI;
     const totalPhase = phaseDegBase + delayPhase;
 
     mag.push(20 * Math.log10(Math.max(magnitude, 1e-12)));
@@ -214,7 +265,7 @@ function plotBode(result) {
   window.State.charts.bode = new Chart(document.getElementById("chartBode"), {
     type: "line",
     data: {
-      labels: freq.map(v => v.toExponential(1)),
+      labels: freq.map((v) => v.toExponential(1)),
       datasets: [
         {
           label: "Magnitud (dB)",
@@ -222,7 +273,7 @@ function plotBode(result) {
           borderColor: "#0078c8",
           borderWidth: 2,
           pointRadius: 0,
-          yAxisID: "yMag"
+          yAxisID: "yMag",
         },
         {
           label: "Fase (°)",
@@ -231,7 +282,7 @@ function plotBode(result) {
           borderWidth: 2,
           borderDash: [6, 3],
           pointRadius: 0,
-          yAxisID: "yPhase"
+          yAxisID: "yPhase",
         },
       ],
     },
@@ -243,8 +294,8 @@ function plotBode(result) {
         legend: {
           labels: {
             color: "#7a8fa0",
-            font: { family: "IBM Plex Sans", size: 9 }
-          }
+            font: { family: "IBM Plex Sans", size: 9 },
+          },
         },
       },
       scales: {
@@ -253,42 +304,42 @@ function plotBode(result) {
           ticks: {
             color: "#7a8fa0",
             font: { family: "IBM Plex Mono", size: 9 },
-            maxTicksLimit: 12
+            maxTicksLimit: 12,
           },
           grid: { color: "rgba(160,180,200,0.25)" },
           title: {
             display: true,
             text: "Frecuencia (rad/s)",
             color: "#7a8fa0",
-            font: { family: "IBM Plex Sans", size: 9 }
+            font: { family: "IBM Plex Sans", size: 9 },
           },
         },
         yMag: {
           position: "left",
           ticks: {
             color: "#0078c8",
-            font: { family: "IBM Plex Mono", size: 9 }
+            font: { family: "IBM Plex Mono", size: 9 },
           },
           grid: { color: "rgba(160,180,200,0.25)" },
           title: {
             display: true,
             text: "Magnitud (dB)",
             color: "#0078c8",
-            font: { family: "IBM Plex Sans", size: 9 }
+            font: { family: "IBM Plex Sans", size: 9 },
           },
         },
         yPhase: {
           position: "right",
           ticks: {
             color: "#e03050",
-            font: { family: "IBM Plex Mono", size: 9 }
+            font: { family: "IBM Plex Mono", size: 9 },
           },
           grid: { drawOnChartArea: false },
           title: {
             display: true,
             text: "Fase (°)",
             color: "#e03050",
-            font: { family: "IBM Plex Sans", size: 9 }
+            font: { family: "IBM Plex Sans", size: 9 },
           },
         },
       },

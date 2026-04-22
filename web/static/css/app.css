@@ -398,6 +398,20 @@ textarea {
   background: var(--bg-raised);
 }
 
+.live-values {
+  display: flex;
+  gap: 16px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-family: "IBM Plex Mono", monospace;
+  color: #7a8fa0;
+}
+
+.live-values b {
+  color: #1a2332;
+  font-weight: 600;
+}
+
 .chart-label { display: flex; align-items: center; gap: 14px; }
 .legend-item {
   display: flex; align-items: center; gap: 5px;
@@ -664,32 +678,76 @@ tbody tr:hover { background: var(--accent-light); }
 .loading-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(242,244,246,0.85);
+  background: rgba(242,244,246,0.75);
+  backdrop-filter: blur(6px);
   display: none;
   align-items: center;
   justify-content: center;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
   z-index: 100;
-  backdrop-filter: blur(3px);
 }
-.loading-overlay.visible { display: flex; }
 
+.loading-overlay.visible {
+  display: flex;
+}
+
+/* Spinner PRO */
 .spinner {
-  width: 34px; height: 34px;
-  border: 2px solid var(--border);
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 3px solid rgba(0,0,0,0.1);
+  border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+  position: relative;
+}
+
+/* Glow effect */
+.spinner::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  border: 2px solid rgba(0,120,200,0.2);
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.loading-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0.5px;
+}
+
+.mini-loader-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex: 1;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.mini-loader {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Spinner más fino */
+.mini-loader .spinner {
+  width: 32px;
+  height: 32px;
+  border: 2px solid rgba(0,0,0,0.1);
   border-top-color: var(--accent);
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
-
-.loading-text {
-  font-family: 'IBM Plex Sans', sans-serif;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  letter-spacing: 0.3px;
 }
 
 /* ==================== NOTIFICATION ==================== */

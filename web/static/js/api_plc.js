@@ -144,28 +144,28 @@ function handleSample(data) {
     data.time,
     raw.rTimeSec,
     raw.rTiempoSeg,
-    raw.arrTimeSec
+    raw.arrTimeSec,
   );
 
   const actuatorMa = pickNumber(
     data.actuator,
     raw.rActuator,
     raw.AO_Actuador_mA,
-    raw.AO_Actuador
+    raw.AO_Actuador,
   );
 
   const sensorMa = pickNumber(
     data.sensor,
     raw.rSensor,
     raw.AI_Sensor_mA,
-    raw.AI_Sensor
+    raw.AI_Sensor,
   );
 
   const setpointMa = pickNumber(
     data.setpoint,
     raw.rSetPoint,
     raw.SP_mA,
-    raw.SP
+    raw.SP,
   );
 
   const actuatorPct = pickNumber(data.actuator_pct);
@@ -191,6 +191,25 @@ function handleSample(data) {
 
 function refreshSignalsViewFromSampleStore() {
   const signalType = document.getElementById("signalType")?.value || "ma";
+  const unit = signalType === "percent" ? "%" : "mA";
+
+  const titleSensor = document
+    .querySelector("#chartSensor")
+    ?.closest(".chart-card")
+    ?.querySelector(".chart-title span");
+
+  if (titleSensor) {
+    titleSensor.textContent = `Señal Sensor — ${unit === "mA" ? "Corriente" : "Porcentaje"} PLC`;
+  }
+
+  const titleAct = document
+    .querySelector("#chartActuator")
+    ?.closest(".chart-card")
+    ?.querySelector(".chart-title span");
+
+  if (titleAct) {
+    titleAct.textContent = `Señal Actuador — ${unit === "mA" ? "Corriente" : "Porcentaje"} PLC`;
+  }
   console.log("Redibujando con signalType =", signalType);
 
   const time = [...SampleStore.time];
@@ -209,6 +228,27 @@ function refreshSignalsViewFromSampleStore() {
     signalType === "percent"
       ? [...SampleStore.setpoint_pct]
       : [...SampleStore.setpoint_ma];
+
+  const lastAct = actuator[actuator.length - 1];
+  const lastSP = setpoint[setpoint.length - 1];
+  const lastSensor = sensor[sensor.length - 1];
+
+  const valActEl = document.getElementById("valAct");
+  const valSPEl = document.getElementById("valSP");
+  const valSensorEl = document.getElementById("valSensor");
+
+  if (valActEl) {
+    valActEl.textContent =
+      typeof lastAct === "number" ? lastAct.toFixed(2) : "--";
+  }
+
+  if (valSPEl) {
+    valSPEl.textContent = typeof lastSP === "number" ? lastSP.toFixed(2) : "--";
+  }
+  if (valSensorEl) {
+    valSensorEl.textContent =
+      typeof lastSensor === "number" ? lastSensor.toFixed(2) : "--";
+  }
 
   console.log("actuator[último] =", actuator[actuator.length - 1]);
   console.log("sensor[último] =", sensor[sensor.length - 1]);
@@ -233,6 +273,7 @@ function pushSample(arr, value) {
 
 // ==================== IDENTIFICATION RESULT ====================
 function handleIdentificationResult(data) {
+  hideLoading();
   const models = Array.isArray(data.models) ? data.models : [];
   const winnerType = data.winner || null;
 
@@ -245,11 +286,15 @@ function handleIdentificationResult(data) {
   const winner =
     normalized.find((m) => m.model_type === winnerType) || normalized[0];
 
-  renderMetricsBar(winner);
-  renderResultsGrid(normalized, winnerType);
-  renderPidSection(winner);
-  plotPIDTunings(winner.pid_tunings);
-  plotBode(winner);
+  try {
+    renderMetricsBar(winner);
+    renderResultsGrid(normalized, winnerType);
+    renderPidSection(winner);
+    plotPIDTunings(winner.pid_tunings);
+    plotBode(winner);
+  } finally {
+    hideLoading(); // 🔥 SIEMPRE se ejecuta
+  }
 
   // Solo si el backend manda curvas simuladas
   const measuredTime = parseTextareaNumbers("dataTime");
@@ -403,7 +448,12 @@ function buildModelParamsHtml(model) {
 
 function renderPidSection(winner) {
   const noPidMsg = document.getElementById("noPidMsg");
+  const loader = document.getElementById("pidLoader");
+
+  if (loader) loader.style.display = "none";
   const pidContent = document.getElementById("pidContent");
+  if (pidContent) pidContent.style.display = "block";
+
   const pidTablesContainer = document.getElementById("pidTablesContainer");
   const pidInfoBox = document.getElementById("pidInfoBox");
 
@@ -545,6 +595,70 @@ function escapeHtml(text) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+// ==================== LOADING ====================
+function showLoading(text = "Procesando...") {
+  const overlay = document.getElementById("loadingOverlay");
+  if (!overlay) return;
+
+  overlay.classList.add("visible");
+  overlay.querySelector(".loading-text").textContent = text;
+}
+
+function hideLoading() {
+  const overlay = document.getElementById("loadingOverlay");
+  if (!overlay) return;
+
+  overlay.classList.remove("visible");
+}
+
+function switchTab(tab) {
+  // Activar tab
+  document
+    .querySelectorAll(".tab")
+    .forEach((t) => t.classList.remove("active"));
+  document
+    .querySelectorAll(".tab-content")
+    .forEach((c) => c.classList.remove("active"));
+
+  document
+    .querySelector(`.tab[onclick="switchTab('${tab}')"]`)
+    .classList.add("active");
+  document.getElementById(`tab-${tab}`).classList.add("active");
+
+  // 🔥 SOLO control visual por tab (NO overlay global)
+  if (tab === "pid") {
+    const pidContent = document.getElementById("pidContent");
+    const pidLoader = document.getElementById("pidLoader");
+
+    if (pidContent && pidContent.style.display === "none") {
+      if (pidLoader) pidLoader.style.display = "flex";
+    }
+  }
+
+  if (tab === "bode") {
+    const bodeContent = document.getElementById("bodeContent");
+    const bodeLoader = document.getElementById("noBodeMsg");
+
+    if (bodeContent && bodeContent.style.display === "none") {
+      if (bodeLoader) bodeLoader.style.display = "flex";
+    }
+  }
+
+  if (tab === "identification") {
+    const noResults = document.getElementById("noResultsMsg");
+    const resultsGrid = document.getElementById("resultsGrid");
+
+    if (resultsGrid && resultsGrid.style.display === "none") {
+      if (noResults) noResults.style.display = "flex";
+    }
+  }
+}
+
+function showPidLoader() {
+  document.getElementById("pidLoader").style.display = "flex";
+  document.getElementById("pidContent").style.display = "none";
 }
 
 document.addEventListener("DOMContentLoaded", () => {
