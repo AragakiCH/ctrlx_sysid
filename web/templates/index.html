@@ -23,13 +23,11 @@
         <div class="status-pill" id="clockDisplay"></div>
       </div>
     </header>
-
     <!-- ==================== MAIN LAYOUT ==================== -->
     <div class="main-layout">
       <!-- ===== SIDEBAR ===== -->
       <aside class="sidebar">
         <div class="section-header">Señales de Entrada</div>
-
         <div class="input-group">
           <label>Tipo de Señal <span class="label-unit">PLC I/O</span></label>
           <select id="signalType" onchange="updateSignalLabels()">
@@ -37,7 +35,6 @@
             <option value="percent">0-100 % (Porcentaje)</option>
           </select>
         </div>
-
         <div class="input-group">
           <label
             >Tiempo
@@ -49,7 +46,6 @@
             rows="3"
           ></textarea>
         </div>
-
         <div class="input-group">
           <label
             >Actuador — Salida PLC
@@ -61,7 +57,6 @@
             rows="3"
           ></textarea>
         </div>
-
         <div class="input-group">
           <label
             >Sensor — Entrada PLC
@@ -73,7 +68,6 @@
             rows="3"
           ></textarea>
         </div>
-
         <div class="input-group">
           <label
             >Set Point
@@ -85,59 +79,17 @@
             rows="2"
           ></textarea>
         </div>
-
-        <!-- <div class="input-group">
-          <label>Orden de Identificación</label>
-          <select id="orderSelect">
-            <option value="auto">Automático (Mejor ajuste)</option>
-            <option value="0">Integrante + Dead Time</option>
-            <option value="1">1er Orden + Dead Time (FOPDT)</option>
-            <option value="2">2do Orden + Dead Time (SOPDT)</option>
-          </select>
-        </div> -->
-
-        <!-- <div class="btn-group">
-          <button class="btn btn-primary" onclick="runIdentification()">
-            ▶ Identificar Sistema
-          </button>
-          <button class="btn btn-secondary" onclick="clearAll()">
-            ✕ Limpiar
-          </button>
-        </div> -->
-
-        <!-- <div class="section-header">Datos de Ejemplo</div>
-        <div class="sample-buttons">
-          <button class="btn-sample" onclick="loadSample('fopdt')">
-            FOPDT<br />1er Orden
-          </button>
-          <button class="btn-sample" onclick="loadSample('sopdt')">
-            SOPDT<br />2do Orden
-          </button>
-          <button class="btn-sample" onclick="loadSample('integrating')">
-            INT<br />Integrante
-          </button>
-        </div> -->
-
-        <!-- <div class="input-group" style="margin-top: auto">
-          <label>Nivel de Ruido <span class="label-unit">σ</span></label>
-          <input
-            type="number"
-            id="noiseLevel"
-            value="0.5"
-            step="0.1"
-            min="0"
-            max="5"
-          />
-        </div> -->
+        <!-- <div class="input-group"> <label>Orden de Identificación</label> <select id="orderSelect"> <option value="auto">Automático (Mejor ajuste)</option> <option value="0">Integrante + Dead Time</option> <option value="1">1er Orden + Dead Time (FOPDT)</option> <option value="2">2do Orden + Dead Time (SOPDT)</option> </select> </div> -->
+        <!-- <div class="btn-group"> <button class="btn btn-primary" onclick="runIdentification()"> ▶ Identificar Sistema </button> <button class="btn btn-secondary" onclick="clearAll()"> ✕ Limpiar </button> </div> -->
+        <!-- <div class="section-header">Datos de Ejemplo</div> <div class="sample-buttons"> <button class="btn-sample" onclick="loadSample('fopdt')"> FOPDT<br />1er Orden </button> <button class="btn-sample" onclick="loadSample('sopdt')"> SOPDT<br />2do Orden </button> <button class="btn-sample" onclick="loadSample('integrating')"> INT<br />Integrante </button> </div> -->
+        <!-- <div class="input-group" style="margin-top: auto"> <label>Nivel de Ruido <span class="label-unit">σ</span></label> <input type="number" id="noiseLevel" value="0.5" step="0.1" min="0" max="5" /> </div> -->
       </aside>
-
       <!-- ===== CONTENT ===== -->
       <main class="content" style="position: relative">
         <div class="loading-overlay" id="loadingOverlay">
           <div class="spinner"></div>
           <div class="loading-text">Procesando...</div>
         </div>
-
         <!-- Tabs -->
         <nav class="tabs">
           <div class="tab active" onclick="switchTab('data')">Señales</div>
@@ -149,7 +101,6 @@
             Análisis Frecuencial
           </div>
         </nav>
-
         <!-- TAB: SEÑALES -->
         <div class="tab-content active" id="tab-data">
           <div class="chart-area">
@@ -167,11 +118,17 @@
                   </div>
                 </div>
               </div>
+
+              <!-- 🔥 PANEL DE VALORES -->
+              <div class="live-values">
+                <span>Act: <b id="valAct">--</b></span>
+                <span>SP: <b id="valSP">--</b></span>
+              </div>
+
               <div class="chart-wrapper">
                 <canvas id="chartActuator"></canvas>
               </div>
             </div>
-
             <div class="chart-card">
               <div class="chart-title">
                 <span>Señal Sensor — Entrada Corriente PLC</span>
@@ -185,10 +142,13 @@
               <div class="chart-wrapper">
                 <canvas id="chartSensor"></canvas>
               </div>
+              <!-- 🔥 PANEL SENSOR -->
+              <div class="live-values">
+                <span>PV: <b id="valSensor">--</b></span>
+              </div>
             </div>
           </div>
         </div>
-
         <!-- TAB: IDENTIFICACIÓN -->
         <div class="tab-content" id="tab-identification">
           <div id="metricsBar" class="metrics-bar" style="display: none">
@@ -209,12 +169,12 @@
               <div class="metric-value" id="metL">—</div>
             </div>
           </div>
-
           <div id="noResultsMsg" style="display: flex">
-            <div class="no-results-icon">⚙</div>
+            <div class="mini-loader">
+              <div class="spinner"></div>
+            </div>
             <span>Cargando Datos</span>
           </div>
-
           <div
             class="chart-card"
             id="idChartCard"
@@ -241,7 +201,6 @@
               <canvas id="chartComparison"></canvas>
             </div>
           </div>
-
           <div
             class="results-grid scrollable"
             id="resultsGrid"
@@ -250,19 +209,25 @@
         </div>
 
         <!-- TAB: SINTONÍA PID -->
-        <!-- TAB: SINTONÍA PID -->
         <div class="tab-content" id="tab-pid">
-          <!-- <div id="noPidMsg" style="display: flex">
-            <div class="no-results-icon">🎛</div>
-            <span>Ejecute identificación primero</span>
-          </div> -->
+          <!-- 🔥 LOADER -->
+          <div id="pidLoader" class="mini-loader-container">
+            <div class="mini-loader">
+              <div class="spinner"></div>
+            </div>
+            <span>Calculando PID...</span>
+          </div>
 
-          <div class="pid-section scrollable" id="pidContent">
+          <!-- 🔥 CONTENIDO REAL -->
+          <div
+            class="pid-section scrollable"
+            id="pidContent"
+            style="display: none"
+          >
             <div class="pid-title">Parámetros PID — Métodos de Sintonía</div>
             <div id="pidTablesContainer"></div>
             <div class="info-box" id="pidInfoBox"></div>
 
-            <!-- 🔥 TU GRÁFICO AQUÍ DENTRO -->
             <div class="chart-card" style="margin-top: 12px">
               <div class="chart-title">
                 <span>Comparación Parámetros PID</span>
@@ -273,12 +238,13 @@
             </div>
           </div>
         </div>
-
         <!-- TAB: ANÁLISIS FRECUENCIAL -->
         <div class="tab-content" id="tab-bode">
-          <div id="noBodeMsg" style="display: flex">
-            <div class="no-results-icon">📊</div>
-            <span>Esperando Resultados</span>
+          <div id="noBodeMsg" class="mini-loader-container">
+            <div class="mini-loader">
+              <div class="spinner"></div>
+            </div>
+            <span>Generando Bode...</span>
           </div>
           <div
             class="chart-area chart-single"
@@ -295,26 +261,21 @@
         </div>
       </main>
     </div>
-
     <div class="notification" id="notification"></div>
-
     <script>
       const nav = performance.getEntriesByType("navigation")[0];
-
       if (nav && nav.type === "reload") {
         sessionStorage.clear();
         localStorage.removeItem("plc_session");
         window.location.href = "/";
       }
     </script>
-
     <!-- Scripts: orden importante state → ui → charts → identification → pid → api -->
     <script src="/static/js/state.js"></script>
     <script src="/static/js/ui.js"></script>
     <script src="/static/js/charts.js"></script>
     <script src="/static/js/identification.js"></script>
     <script src="/static/js/pid.js"></script>
-
     <script src="/static/js/api_plc.js"></script>
   </body>
 </html>
