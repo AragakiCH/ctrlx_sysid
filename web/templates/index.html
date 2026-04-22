@@ -16,9 +16,9 @@
         <span class="logo-context">// System Identification</span>
       </div>
       <div class="header-status">
-        <div class="status-pill">
-          <div class="status-dot"></div>
-          <span>ONLINE</span>
+        <div class="status-pill" id="statusPill">
+          <div class="status-dot" id="statusDot"></div>
+          <span id="statusText">OFFLINE</span>
         </div>
         <div class="status-pill" id="clockDisplay"></div>
       </div>
@@ -78,6 +78,12 @@
             placeholder="12.0, 12.0, 12.0 ..."
             rows="2"
           ></textarea>
+        </div>
+
+        <div class="btn-group" style="margin-top: 10px">
+          <button class="btn btn-primary" onclick="startSystem()">
+            ▶ Identificar Sistema
+          </button>
         </div>
         <!-- <div class="input-group"> <label>Orden de Identificación</label> <select id="orderSelect"> <option value="auto">Automático (Mejor ajuste)</option> <option value="0">Integrante + Dead Time</option> <option value="1">1er Orden + Dead Time (FOPDT)</option> <option value="2">2do Orden + Dead Time (SOPDT)</option> </select> </div> -->
         <!-- <div class="btn-group"> <button class="btn btn-primary" onclick="runIdentification()"> ▶ Identificar Sistema </button> <button class="btn btn-secondary" onclick="clearAll()"> ✕ Limpiar </button> </div> -->

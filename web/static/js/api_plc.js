@@ -1,6 +1,72 @@
 let ws = null;
 let wsReconnectTimer = null;
 
+// 🔥 CONTROL DE INICIO MANUAL
+let wsStarted = false;
+
+function startSystem() {
+  if (wsStarted) return;
+
+  wsStarted = true;
+
+  const btn = document.querySelector(".btn-primary");
+  if (btn) {
+    btn.textContent = "Conectando...";
+    btn.disabled = true;
+  }
+
+  resetSampleStore();
+  clearUIValues();
+  showLoading("Conectando al sistema...");
+
+  connectWebSocket();
+}
+
+function resetSampleStore() {
+  SampleStore.time = [];
+  SampleStore.actuator_ma = [];
+  SampleStore.sensor_ma = [];
+  SampleStore.setpoint_ma = [];
+  SampleStore.actuator_pct = [];
+  SampleStore.sensor_pct = [];
+  SampleStore.setpoint_pct = [];
+}
+
+function clearUIValues() {
+  setTextareaValues("dataTime", []);
+  setTextareaValues("dataActuator", []);
+  setTextareaValues("dataSensor", []);
+  setTextareaValues("dataSetpoint", []);
+
+  const ids = ["valAct", "valSP", "valSensor"];
+  ids.forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = "--";
+  });
+
+  // limpiar gráficos si ya existen
+  if (typeof plotRawData === "function") {
+    plotRawData([], [], [], []);
+  }
+}
+
+function setConnectionStatus(isOnline) {
+  const dot = document.getElementById("statusDot");
+  const text = document.getElementById("statusText");
+
+  if (!dot || !text) return;
+
+  if (isOnline) {
+    dot.classList.remove("offline");
+    dot.classList.add("online");
+    text.textContent = "ONLINE";
+  } else {
+    dot.classList.remove("online");
+    dot.classList.add("offline");
+    text.textContent = "OFFLINE";
+  }
+}
+
 // ==================== STORE DE MUESTRAS EN TIEMPO REAL ====================
 const SampleStore = {
   time: [],
@@ -31,12 +97,18 @@ function connectWebSocket() {
   ws = new WebSocket(wsUrl);
 
   ws.onopen = () => {
+    const btn = document.querySelector(".btn-primary");
+    if (btn) {
+      btn.textContent = "Conectado ✔";
+    }
     console.log("WebSocket conectado");
+
+    setConnectionStatus(true); // 🔥 AQUI
+
     if (typeof showNotification === "function") {
       showNotification("WebSocket conectado", "success");
     }
 
-    // Dejamos identification_result activo
     sendWsMessage({ type: "ping" });
     sendWsMessage({ type: "get_latest" });
     sendWsMessage({ type: "get_latest_identification" });
@@ -57,18 +129,27 @@ function connectWebSocket() {
 
   ws.onerror = (err) => {
     console.error("Error WebSocket:", err);
+
+    setConnectionStatus(false); // 🔥 recomendado
   };
 
   ws.onclose = () => {
     console.warn("WebSocket cerrado");
+
+    setConnectionStatus(false);
+    ws = null; // 🔥 importante
+
     if (typeof showNotification === "function") {
       showNotification("WebSocket desconectado. Reintentando...", "error");
     }
 
     clearTimeout(wsReconnectTimer);
-    wsReconnectTimer = setTimeout(() => {
-      connectWebSocket();
-    }, 3000);
+
+    if (wsStarted) {
+      wsReconnectTimer = setTimeout(() => {
+        connectWebSocket();
+      }, 3000);
+    }
   };
 }
 
@@ -662,8 +743,7 @@ function showPidLoader() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  connectWebSocket();
-
+  setConnectionStatus(false);
   const signalTypeSelect = document.getElementById("signalType");
   if (signalTypeSelect) {
     signalTypeSelect.addEventListener("change", () => {

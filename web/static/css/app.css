@@ -133,9 +133,13 @@ header {
   letter-spacing: 0.4px;
 }
 
-.status-dot {
-  width: 6px; height: 6px;
-  border-radius: 50%;
+.status-dot.offline {
+  background: var(--red);
+  animation: none;
+  box-shadow: none;
+}
+
+.status-dot.online {
   background: #2ecc71;
   animation: pulse 2.5s ease-in-out infinite;
 }
