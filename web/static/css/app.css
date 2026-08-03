@@ -334,6 +334,21 @@ textarea:focus {
 .btn-danger           { background: var(--surface); color: var(--danger); border: 0.5px solid #f7c1c1; }
 .btn-danger:hover     { background: var(--danger-bg); }
 
+/* Logout — secondary con carácter (rojo suave en hover) */
+.btn-logout {
+  background: var(--surface);
+  color: var(--text2);
+  border: 0.5px solid var(--border-strong);
+  transition: all 0.15s ease;
+}
+.btn-logout:hover {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border-color: #f7c1c1;
+}
+.btn-logout i { transition: transform 0.15s ease; }
+.btn-logout:hover i { transform: translateX(2px); }
+
 .btn-row {
   display: flex;
   gap: 8px;

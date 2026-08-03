@@ -22,7 +22,6 @@ function startCapture() {
   document.getElementById("btnStop").style.display  = "";
   document.getElementById("btnIdent").style.display = "none";
   document.getElementById("btnToIdent").style.display = "none";
-  document.getElementById("progBar").style.width = "0%";
 
   setStatus("Conectando al PLC vía WebSocket...", "running");
 
@@ -170,6 +169,9 @@ function handleWsMessage(msg) {
  * El backend puede mandar la muestra "cruda" (`raw`) o ya derivada.
  */
 function handleSample(data) {
+  // Los dropdowns de variables (paso 1) se llenan con las llaves de `raw`.
+  populateVariableDropdowns(data);
+
   const raw = data.raw || {};
 
   const timeValue = pickNumber(data.time, raw.rTimeSec, raw.rTiempoSeg, raw.arrTimeSec);
@@ -228,12 +230,54 @@ function refreshLiveViews() {
   // Charts en tiempo real (paso 3)
   plotCapture(s.time.length);
 
-  // Barra de progreso — se rellena hasta `maxPoints`
-  const pct = Math.min(100, (s.time.length / s.maxPoints) * 100).toFixed(0);
-  const bar = document.getElementById("progBar");
-  const lbl = document.getElementById("progLabel");
-  if (bar) bar.style.width  = pct + "%";
-  if (lbl) lbl.textContent  = pct + "%  |  " + s.time.length + " muestras";
+  // (Barra de progreso del buffer eliminada — el CSS .prog-row/.prog-wrap/.prog-bar
+  //  sigue en app.css por si queremos traerla de vuelta.)
+}
+
+
+/* ==================== POBLACIÓN DE DROPDOWNS DE VARIABLES ==================== */
+
+/**
+ * Al recibir el primer sample con `raw`, llena los <select> de variables
+ * del paso 1 con todas las llaves del programa. Pre-selecciona cada
+ * dropdown con lo que el backend ya tiene mapeado (`sample.mapping`).
+ *
+ * Se ejecuta una sola vez: en cuanto los selects tienen opciones reales,
+ * ya no se toca (así no pisa cambios manuales del usuario).
+ */
+function populateVariableDropdowns(sample) {
+  const raw = sample?.raw;
+  if (!raw) return;
+
+  const keys = Object.keys(raw);
+  if (!keys.length) return;
+
+  // ¿Ya se llenó? El placeholder inicial tiene value="", los reales no.
+  const first = document.getElementById("varAct");
+  if (!first || (first.options.length > 0 && first.options[0].value !== "")) return;
+
+  const mapping = sample.mapping || {};
+
+  const targets = [
+    { id: "varAct", role: "actuator" },
+    { id: "varSen", role: "sensor" },
+    { id: "varSP",  role: "setpoint" }
+  ];
+
+  targets.forEach(({ id, role }) => {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+
+    // Para setpoint dejamos una opción "sin asignar" (es opcional)
+    const opts = role === "setpoint" ? [`<option value="">— sin asignar —</option>`] : [];
+    keys.forEach((k) => {
+      opts.push(`<option value="${escapeHtml(k)}">${escapeHtml(k)}</option>`);
+    });
+    sel.innerHTML = opts.join("");
+
+    const current = mapping[role];
+    if (current && keys.includes(current)) sel.value = current;
+  });
 }
 
 

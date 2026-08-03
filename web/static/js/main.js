@@ -36,6 +36,16 @@ document.addEventListener("DOMContentLoaded", () => {
       drawStepPreview();
     }
   });
+
+  // ---------- Auto-conexión WS ----------
+  // Se abre la conexión apenas carga la app para que los dropdowns de
+  // variables (paso 1) se pueblen con lo que envía el backend. Si no
+  // hay sesión OPC UA activa, el WS conecta pero no llega ningún sample
+  // (documentado en el README). El botón "Inicio" del paso 3 sigue
+  // funcionando como reset del buffer.
+  if (typeof startCapture === "function") {
+    startCapture();
+  }
 });
 
 
@@ -50,4 +60,34 @@ function loadSample(scenario) {
       `Los datos deben provenir del PLC vía WebSocket.`,
     "error"
   );
+}
+
+
+/* =========================================================
+   LOGOUT
+   Cierra la sesión OPC UA en el backend, limpia storage
+   local y redirige al login.
+   ========================================================= */
+async function logout() {
+  // Cerrar el WebSocket si sigue abierto (para el hilo de lectura del PLC).
+  try {
+    if (typeof stopCapture === "function") stopCapture();
+  } catch (_) {}
+
+  // Cerrar sesión en el backend (limpia credenciales OPC UA y buffer).
+  try {
+    await fetch(`${State.API_BASE}/api/opcua/logout`, { method: "POST" });
+  } catch (err) {
+    console.error("Error en logout:", err);
+  }
+
+  // Limpiar storage local.
+  localStorage.removeItem("isAuth");
+  localStorage.removeItem("plcProgram");
+  localStorage.removeItem("plcMapping");
+  localStorage.removeItem("plc_session");
+  sessionStorage.clear();
+
+  // Volver al login.
+  window.location.href = "/";
 }

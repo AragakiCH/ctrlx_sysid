@@ -35,7 +35,15 @@
         id="btnExport"
         style="display:none"
       >
-        <i class="fa-solid fa-download"></i> Exportar
+        <i class="fa-solid fa-download"></i> Importar
+      </button>
+      <button
+        class="btn btn-logout"
+        onclick="logout()"
+        id="btnLogout"
+        title="Cerrar sesión"
+      >
+        <i class="fa-solid fa-right-from-bracket"></i> Cerrar sesión
       </button>
     </div>
   </header>
@@ -81,7 +89,9 @@
         <div class="var-grid">
           <div>
             <label>Variable en el PLC</label>
-            <input type="text" id="varAct" value="AO_Actuador_mA" placeholder="ej. AO_Actuador_mA" />
+            <select id="varAct">
+              <option value="">Cargando variables...</option>
+            </select>
           </div>
           <div>
             <label>Tipo de señal</label>
@@ -103,7 +113,9 @@
         <div class="var-grid">
           <div>
             <label>Variable en el PLC</label>
-            <input type="text" id="varSen" value="AI_Sensor_mA" placeholder="ej. AI_Sensor_mA" />
+            <select id="varSen">
+              <option value="">Cargando variables...</option>
+            </select>
           </div>
           <div>
             <label>Tipo de señal</label>
@@ -125,7 +137,9 @@
         <div class="var-grid">
           <div>
             <label>Variable en el PLC</label>
-            <input type="text" id="varSP" value="SP_mA" placeholder="ej. SP_mA" />
+            <select id="varSP">
+              <option value="">Cargando variables...</option>
+            </select>
           </div>
           <div>
             <label>Tipo de señal</label>
@@ -292,11 +306,6 @@
         <div class="chart-box h-160">
           <canvas id="cSen" role="img" aria-label="Señal del sensor en el tiempo"></canvas>
         </div>
-      </div>
-
-      <div class="prog-row">
-        <div class="prog-wrap"><div class="prog-bar" id="progBar"></div></div>
-        <span class="prog-lbl" id="progLabel">—</span>
       </div>
 
       <div class="btn-row">
