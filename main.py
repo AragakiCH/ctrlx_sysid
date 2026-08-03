@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import mimetypes
 import os
 from pathlib import Path
 
@@ -26,6 +27,20 @@ BASE_DIR = Path(__file__).resolve().parent
 WEB_DIR = BASE_DIR / "web"
 STATIC_DIR = WEB_DIR / "static"
 TEMPLATES_DIR = WEB_DIR / "templates"
+
+# En Windows, mimetypes lee los tipos MIME del registro. Es frecuente que otro
+# programa haya dejado ".css" o ".js" apuntando a "text/plain". StaticFiles usa
+# mimetypes.guess_type, así que serviría la hoja de estilos con el MIME
+# equivocado y Chrome/Brave la RECHAZAN por strict MIME checking: la página
+# carga sin estilos aunque el archivo se descargue con 200 OK.
+#
+# Estas líneas fuerzan los tipos correctos y deben ir ANTES de montar
+# StaticFiles. En Linux no cambian nada.
+mimetypes.add_type("text/css", ".css")
+mimetypes.add_type("text/javascript", ".js")
+mimetypes.add_type("application/json", ".json")
+mimetypes.add_type("image/svg+xml", ".svg")
+mimetypes.add_type("font/woff2", ".woff2")
 
 APP_PREFIX = os.getenv("APP_PREFIX", "/api-sysid")
 

@@ -1,12 +1,66 @@
+/* =========================================================
+   state.js
+   Estado global de la aplicación.
+   Se carga primero — el resto de módulos leen/escriben aquí.
+   ========================================================= */
+
 window.State = {
+  // ---------- Endpoints ----------
   APP_PREFIX: window.APP_PREFIX || "",
-  API_BASE: window.API_BASE || window.location.origin,
-  WS_BASE: window.WS_BASE || window.location.origin.replace(/^http/, "ws"),
-  charts: {
-    actuator: null,
-    sensor: null,
-    comparison: null,
-    bode: null
+  API_BASE:   window.API_BASE   || window.location.origin,
+  WS_BASE:    window.WS_BASE    || window.location.origin.replace(/^http/, "ws"),
+
+  // ---------- UI ----------
+  ui: {
+    step: 1,              // paso activo del wizard (1..5)
+    pidFormat: "standard" // "standard" (Kp,Ki,Kd) | "parallel" (Kp,Ti,Td)
   },
-  identificationResults: null
+
+  // ---------- Chart.js instances ----------
+  charts: {
+    cAct:       null,   // paso 3 — actuador en tiempo real
+    cSen:       null,   // paso 3 — sensor en tiempo real
+    cCmp:       null,   // paso 4 — medido vs modelo
+    cBodeMag:   null,   // paso 4 — Bode magnitud
+    cBodePhase: null    // paso 4 — Bode fase
+  },
+
+  // ---------- Buffer de muestras en tiempo real ----------
+  // Alimentado por websocket.js cuando llegan mensajes {type:"sample"}
+  sampleStore: {
+    time:         [],
+    actuator_ma:  [],
+    sensor_ma:    [],
+    setpoint_ma:  [],
+    actuator_pct: [],
+    sensor_pct:   [],
+    setpoint_pct: [],
+    maxPoints:    300
+  },
+
+  // ---------- Resultados de identificación ----------
+  identification: {
+    models: [],     // arreglo normalizado de modelos (FOPDT/SOPDT/Integrating)
+    winner: null,   // model_type ("fopdt" | "sopdt" | "integrating")
+    active: 0       // índice del modelo seleccionado en el paso 5
+  },
+
+  // ---------- WebSocket ----------
+  ws: {
+    connection:     null,
+    started:        false,
+    reconnectTimer: null
+  }
 };
+
+/** Limpia el buffer de muestras. */
+function resetSampleStore() {
+  const s = State.sampleStore;
+  s.time = [];
+  s.actuator_ma = [];
+  s.sensor_ma = [];
+  s.setpoint_ma = [];
+  s.actuator_pct = [];
+  s.sensor_pct = [];
+  s.setpoint_pct = [];
+}

@@ -1,117 +1,173 @@
-// // ==================== RENDER PID ====================
-// function renderPID(results) {
-//   if (!results?.length) return;
+/* =========================================================
+   pid.js
+   Rendering de la sintonía PID (paso 5).
+   - Tabs por modelo (FOPDT / SOPDT / Integrante).
+   - Tabla con métodos de sintonía (IMC, Ziegler-Nichols, Cohen-Coon, SIMC).
+   - Toggle standard (Kp,Ki,Kd) vs parallel (Kp,Ti,Td).
+   Cuando el backend no envía sintonías, se calcula localmente
+   con `tunePIDLocal` (mismas fórmulas que ctrlx_final).
+   ========================================================= */
 
-//   document.getElementById('noPidMsg').style.display = 'none';
-//   document.getElementById('pidContent').style.display = '';
 
-//   const container = document.getElementById('pidTablesContainer');
-//   container.innerHTML = results
-//     .filter(r => r.pid_tuning && Object.keys(r.pid_tuning).length > 0)
-//     .map(r => buildPIDTable(r))
-//     .join('');
+/* ==================== RENDER PRINCIPAL ==================== */
+/**
+ * @param {Object[]} models    modelos normalizados
+ * @param {number}   modelIdx  índice del modelo activo
+ */
+function renderPID(models, modelIdx = 0) {
+  if (!models?.length) return;
 
-//   const best = results[0];
-//   document.getElementById('pidInfoBox').innerHTML = `
-//     <strong style="color:var(--accent)">MODELO RECOMENDADO: ${best.method}</strong><br>
-//     K = ${best.K} | τ = ${best.tau || best.tau1 || '—'} s | L = ${best.delay || best.L || 0} s<br><br>
-//     <strong style="color:var(--green)">Para ctrlX Core X3:</strong><br>
-//     Configure el bloque PID en AXCS con los parámetros de la tabla superior.<br>
-//     Se recomienda el método IMC/Lambda para mayor robustez ante perturbaciones.<br>
-//     Verifique el modo de anti-windup y los límites de saturación del actuador.
-//   `;
-// }
+  document.getElementById("emptyPID").style.display = "none";
+  const pc = document.getElementById("pidContent");
+  pc.style.display = "flex";
+  pc.style.flexDirection = "column";
 
-// // ==================== BUILD PID TABLE ====================
-// function buildPIDTable(r) {
-//   const rows = Object.entries(r.pid_tuning).map(([method, p]) => `
-//     <tr>
-//       <td class="td-method">${method}</td>
-//       <td class="td-value">${p.Kp}</td>
-//       <td class="td-value">${p.Ti}</td>
-//       <td class="td-value">${p.Td}</td>
-//       <td>${p.Ki}</td>
-//       <td>${p.Kd}</td>
-//       <td class="td-desc">${p.description}</td>
-//     </tr>
-//   `).join('');
+  // Tabs por modelo
+  const tabs = document.getElementById("pidModelTabs");
+  tabs.innerHTML = models
+    .map(
+      (r, i) => `
+        <div class="pid-mtab${i === modelIdx ? " active" : ""}"
+             onclick="switchPIDModel(${i})">
+          ${modelTypeLabel(r.model_type)} — R² ${formatNumber(r.fit_quality, 1)}%
+        </div>
+      `
+    )
+    .join("");
 
-//   return `
-//     <div style="font-family:'Share Tech Mono';font-size:10px;color:var(--accent-dim);margin-bottom:8px;letter-spacing:1px">
-//       MODELO: ${r.method} — Ajuste R² ${(r.fit_quality || 0).toFixed(1)}%
-//     </div>
-//     <div class="pid-table-wrapper" style="margin-bottom:20px">
-//       <table>
-//         <thead>
-//           <tr>
-//             <th>MÉTODO</th>
-//             <th>Kp</th>
-//             <th>Ti (s)</th>
-//             <th>Td (s)</th>
-//             <th>Ki</th>
-//             <th>Kd</th>
-//             <th>DESCRIPCIÓN</th>
-//           </tr>
-//         </thead>
-//         <tbody>${rows}</tbody>
-//       </table>
-//     </div>
-//   `;
-// }
+  const r = models[modelIdx];
 
-let pidChart = null;
+  // Convertir arreglo de pid_tunings → objeto por método
+  const tuning =
+    r.pid_tunings?.length
+      ? Object.fromEntries(r.pid_tunings.map((t) => [t.method || t.name || "—", t]))
+      : tunePIDLocal(r);
 
-function plotPIDTunings(tunings) {
-  if (!Array.isArray(tunings) || !tunings.length) return;
+  fillPIDTable(tuning);
 
-  const labels = tunings.map((t) => t.method || "Método");
+  // Info box
+  const L   = Number(r.dead_time ?? 0).toFixed(4);
+  const tau = Number(r.tau ?? r.tau1 ?? 0).toFixed(4);
+  const K   = Number(r.gain ?? 0).toFixed(4);
 
-  const kpData = tunings.map((t) => Number(t.kp ?? t.Kp) || 0);
-  const kiData = tunings.map((t) => Number(t.ki ?? t.Ki) || 0);
-  const kdData = tunings.map((t) => Number(t.kd ?? t.Kd) || 0);
+  document.getElementById("pidInfoBox").innerHTML = `
+    <strong>${modelTypeLabel(r.model_type)}</strong>
+    — K = ${K} | τ = ${tau} s | L = ${L} s<br>
+    <span style="color:var(--text3)">
+      Se recomienda IMC/Lambda para mayor robustez ante perturbaciones.
+      Configure el bloque PID en ctrlX AXCS con los parámetros de la tabla
+      y active el anti-windup.
+    </span>
+  `;
+}
 
-  const ctx = document.getElementById("chartPID");
-  if (!ctx) return;
 
-  // destruir gráfico anterior
-  if (pidChart) {
-    pidChart.destroy();
+/** Cambia el modelo activo en la tabla de PID. */
+function switchPIDModel(i) {
+  State.identification.active = i;
+  if (State.identification.models.length) {
+    renderPID(State.identification.models, i);
   }
+}
 
-  pidChart = new Chart(ctx, {
-    type: "bar",
-    data: {
-      labels: labels,
-      datasets: [
-        {
-          label: "Kp",
-          data: kpData,
-          backgroundColor: "#0078c8",
-        },
-        {
-          label: "Ki",
-          data: kiData,
-          backgroundColor: "#1a9e5c",
-        },
-        {
-          label: "Kd",
-          data: kdData,
-          backgroundColor: "#e03050",
-        },
-      ],
-    },
-    options: {
-      responsive: true,
-      plugins: {
-        legend: {
-          position: "top",
-        },
-      },
-      scales: {
-        y: {
-          beginAtZero: true,
-        },
-      },
-    },
+
+/* ==================== TABLA ==================== */
+/**
+ * Rellena el tbody `#pidBody` con las filas del tuning.
+ * Cambia dinámicamente los encabezados según `State.ui.pidFormat`.
+ */
+function fillPIDTable(tuning) {
+  const std = State.ui.pidFormat === "standard";
+
+  document.getElementById("col1").textContent = "Kp";
+  document.getElementById("col2").textContent = std ? "Ki" : "Ti (s)";
+  document.getElementById("col3").textContent = std ? "Kd" : "Td (s)";
+
+  const body = document.getElementById("pidBody");
+  body.innerHTML = "";
+
+  Object.entries(tuning).forEach(([m, p]) => {
+    const kp = pickNumber(p.Kp, p.kp) ?? 0;
+    const ki = pickNumber(p.Ki, p.ki);
+    const kd = pickNumber(p.Kd, p.kd);
+    const ti = pickNumber(p.Ti, p.ti);
+    const td = pickNumber(p.Td, p.td);
+
+    const v2 = std
+      ? (ki != null ? ki : kp / Math.max(ti || 0.001, 0.001))
+      : ti;
+    const v3 = std
+      ? (kd != null ? kd : kp * (td || 0))
+      : td;
+
+    const desc = p.description || p.desc || "—";
+
+    body.innerHTML += `
+      <tr>
+        <td class="td-method">${escapeHtml(m)}</td>
+        <td class="td-val">${formatNumber(kp, 4)}</td>
+        <td class="td-val">${formatNumber(v2, 4)}</td>
+        <td class="td-val">${formatNumber(v3, 4)}</td>
+        <td class="td-desc">${escapeHtml(desc)}</td>
+      </tr>
+    `;
   });
+}
+
+
+/* ==================== SINTONÍA LOCAL (fallback) ==================== */
+/**
+ * Calcula sintonías PID clásicas para un modelo, sin depender del backend.
+ * Mismas fórmulas que la versión standalone (ctrlx_final).
+ */
+function tunePIDLocal(r) {
+  const K   = Number(r.gain ?? r.K ?? 1);
+  const L   = Math.max(Number(r.dead_time ?? r.delay ?? r.L ?? 0), 0.001);
+  const tau = Number(r.tau  ?? r.tau1 ?? 1);
+  const t1  = Number(r.tau1 ?? tau);
+  const t2  = Number(r.tau2 ?? tau * 0.5);
+
+  const isSOPDT = (r.model_type || "").toLowerCase() === "sopdt";
+  const tE  = isSOPDT ? t1 + t2 : tau;
+  const lam = Math.max(0.25 * tE, 0.8 * L);
+
+  const imcKp = tE / (K * (lam + L));
+  const znKp  = 1.2 / ((K / tE) * L);
+  const ccKp  = (1.35 / (K * (L / tE))) * (1 + 0.18 * (L / tE) / (1 + 0.185 * (L / tE)));
+  const simcKp = tE / (K * 2 * L);
+
+  return {
+    "IMC": {
+      Kp: +imcKp.toFixed(4),
+      Ti: +tE.toFixed(4),
+      Td: 0,
+      Ki: +(imcKp / tE).toFixed(4),
+      Kd: 0,
+      description: "IMC / Lambda — robusto, recomendado para procesos lentos"
+    },
+    "Ziegler-Nichols": {
+      Kp: +znKp.toFixed(4),
+      Ti: +(2 * L).toFixed(4),
+      Td: +(0.5 * L).toFixed(4),
+      Ki: +(znKp / (2 * L)).toFixed(4),
+      Kd: +(znKp * 0.5 * L).toFixed(4),
+      description: "ZN lazo abierto — agresivo, buena velocidad de respuesta"
+    },
+    "Cohen-Coon": {
+      Kp: +ccKp.toFixed(4),
+      Ti: +Math.max(2.5 * L, 0.01).toFixed(4),
+      Td: +(0.37 * L).toFixed(4),
+      Ki: 0,
+      Kd: 0,
+      description: "Cohen-Coon — buen balance entre rapidez y estabilidad"
+    },
+    "SIMC": {
+      Kp: +simcKp.toFixed(4),
+      Ti: +Math.min(tE, 4 * L).toFixed(4),
+      Td: 0,
+      Ki: +(simcKp / Math.min(tE, 4 * L)).toFixed(4),
+      Kd: 0,
+      description: "SIMC (Skogestad) — excelente rechazo de perturbaciones"
+    }
+  };
 }

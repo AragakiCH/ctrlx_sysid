@@ -96,7 +96,7 @@ body {
 /* Modifica esta parte en tu login.css */
 .input-group:has(select):not(:has(#btnDiscoverPrograms))::after {
     content: '\f078'; 
-    font-family: 'Font Awesome 6 Free';
+    font-family: 'Font Awesome 7 Free';
     font-weight: 900;
     position: absolute;
     right: 15px;

@@ -1,348 +1,205 @@
-function getSignalUnit() {
-  const sigType = document.getElementById("signalType")?.value;
-  return sigType === "ma" ? "mA" : "%";
-}
+/* =========================================================
+   charts.js
+   Rendering de todos los gráficos Chart.js del wizard.
+   - Paso 2: vista previa del escalón (canvas 2D nativo).
+   - Paso 3: cAct (actuador) y cSen (sensor) en tiempo real.
+   - Paso 4: cCmp (medido vs modelo).
+   ========================================================= */
 
-const crosshairPlugin = {
-  id: "crosshair",
 
-  afterDraw(chart) {
-    if (!chart.tooltip?._active?.length) return;
+/* ==================== PASO 2 · PREVIEW DEL ESCALÓN ==================== */
+/**
+ * Dibuja en `#stepPreview` un escalón según los valores de:
+ * `typeAct`, `stepFrom`, `stepTo`, `duration`, `stepDelay`.
+ * Se dibuja con canvas 2D — no usa Chart.js.
+ */
+function drawStepPreview() {
+  const c = document.getElementById("stepPreview");
+  if (!c) return;
 
-    const ctx = chart.ctx;
-    const activePoint = chart.tooltip._active[0];
-    const x = activePoint.element.x;
+  const ctx = c.getContext("2d");
+  c.width  = c.parentElement.offsetWidth || 500;
+  c.height = c.parentElement.offsetHeight || 100;
 
-    ctx.save();
+  const W = c.width, H = c.height, P = 22;
+  ctx.clearRect(0, 0, W, H);
+
+  const t    = getSignalType();
+  const from = parseFloat(document.getElementById("stepFrom").value)  || 8;
+  const to   = parseFloat(document.getElementById("stepTo").value)    || 12;
+  const dur  = parseFloat(document.getElementById("duration").value)  || 120;
+  const del  = parseFloat(document.getElementById("stepDelay").value) || 10;
+
+  const mx = t === "ma" ? 20 : t === "v" ? 10 : 100;
+  const mn = t === "ma" ? 4  : 0;
+
+  const norm = (v) => H - P - ((v - mn) / (mx - mn)) * (H - 2 * P);
+  const tx   = (x) => P + (x / dur) * (W - 2 * P);
+
+  // Reflejar el % equivalente
+  const fromPct = document.getElementById("stepFromPct");
+  const toPct   = document.getElementById("stepToPct");
+  if (fromPct) fromPct.textContent = "= " + toRange(from, t).toFixed(0) + " %";
+  if (toPct)   toPct.textContent   = "= " + toRange(to, t).toFixed(0) + " %";
+
+  // Grilla
+  ctx.strokeStyle = "rgba(0,0,0,0.06)";
+  ctx.lineWidth   = 0.5;
+  [0, 0.25, 0.5, 0.75, 1].forEach((f) => {
     ctx.beginPath();
-    ctx.moveTo(x, chart.chartArea.top);
-    ctx.lineTo(x, chart.chartArea.bottom);
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = "#999";
-    ctx.setLineDash([4, 4]);
+    ctx.moveTo(P, H - P - f * (H - 2 * P));
+    ctx.lineTo(W - P, H - P - f * (H - 2 * P));
     ctx.stroke();
-    ctx.restore();
-  },
-};
-
-// ==================== RAW DATA ====================
-function plotRawData(time, actuator, sensor, setpoint = []) {
-  const unit = getSignalUnit();
-  const signalType = document.getElementById("signalType")?.value;
-  const sensorColor = signalType === "percent" ? "#ff9800" : "#1a9e5c";
-  const actuatorColor = signalType === "percent" ? "#ff9800" : "#1a9e5c";
-
-  const makeConfig = (label, data, color, yLabel, withSetpoint) => ({
-    type: "line",
-    data: {
-      labels: time.map((v) => Number(v).toFixed(2)),
-      datasets: [
-        {
-          label,
-          data,
-          borderColor: color,
-          borderWidth: 2,
-          pointRadius: 0,
-          tension: 0.12,
-          fill: false,
-        },
-        ...(withSetpoint && setpoint?.length
-          ? [
-              {
-                label: "Set Point",
-                data: setpoint,
-                borderColor: "#c47a00",
-                borderWidth: 1.5,
-                borderDash: [6, 4],
-                pointRadius: 0,
-                tension: 0,
-                fill: false,
-              },
-            ]
-          : []),
-      ],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: { duration: 250 },
-      plugins: {
-        legend: { display: false },
-      },
-      scales: {
-        x: {
-          ticks: {
-            color: "#7a8fa0",
-            font: { family: "IBM Plex Mono", size: 9 },
-            maxTicksLimit: 10,
-          },
-          grid: { color: "rgba(160,180,200,0.25)" },
-          title: {
-            display: true,
-            text: "Tiempo (s)",
-            color: "#7a8fa0",
-            font: { family: "IBM Plex Sans", size: 9 },
-          },
-        },
-        y: {
-          ticks: {
-            color: "#7a8fa0",
-            font: { family: "IBM Plex Mono", size: 9 },
-          },
-          grid: { color: "rgba(160,180,200,0.25)" },
-          title: {
-            display: true,
-            text: yLabel,
-            color: "#7a8fa0",
-            font: { family: "IBM Plex Sans", size: 9 },
-          },
-        },
-      },
-    },
   });
 
-  // if (window.State?.charts?.actuator) window.State.charts.actuator.destroy();
-  // // if (window.State?.charts?.sensor) window.State.charts.sensor.destroy();
+  // Área de retardo
+  ctx.fillStyle = "rgba(42,120,214,0.06)";
+  ctx.fillRect(tx(0), norm(to), tx(del) - tx(0), norm(from) - norm(to));
 
-  // if (window.State?.charts?.sensor) {
-  //   window.State.charts.sensor.destroy();
-  // }
+  // Línea de retardo (punteada)
+  ctx.setLineDash([4, 3]);
+  ctx.strokeStyle = "rgba(42,120,214,0.3)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(tx(del), P);
+  ctx.lineTo(tx(del), H - P);
+  ctx.stroke();
+  ctx.setLineDash([]);
 
-  // window.State.charts.sensor = new Chart(
-  //   document.getElementById("chartSensor"),
-  //   makeConfig("Sensor", sensor, sensorColor, `Sensor (${unit})`, false),
-  // );
-  // ACTUADOR
-  if (window.State?.charts?.actuator) {
-    window.State.charts.actuator.destroy();
-  }
+  // Curva del escalón
+  ctx.strokeStyle = "#2a78d6";
+  ctx.lineWidth = 2.5;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  ctx.moveTo(tx(0),   norm(from));
+  ctx.lineTo(tx(del), norm(from));
+  ctx.lineTo(tx(del), norm(to));
+  ctx.lineTo(tx(dur), norm(to));
+  ctx.stroke();
 
-  window.State.charts.actuator = new Chart(
-    document.getElementById("chartActuator"),
-    makeConfig("Actuador", actuator, actuatorColor, `Actuador (${unit})`, true)
-  );
+  // Etiquetas
+  const u = t === "ma" ? "mA" : t === "v" ? "V" : "%";
+  ctx.fillStyle = "#898781";
+  ctx.font = "10px system-ui";
+  ctx.fillText(from.toFixed(1) + " " + u, P + 4, norm(from) - 4);
+  ctx.fillText(to.toFixed(1)   + " " + u, P + 4, norm(to)   - 4);
 
-  // SENSOR
-  if (window.State?.charts?.sensor) {
-    window.State.charts.sensor.destroy();
-  }
-
-  window.State.charts.sensor = new Chart(
-    document.getElementById("chartSensor"),
-    makeConfig("Sensor", sensor, sensorColor, `Sensor (${unit})`, false),
-  );
+  ctx.fillStyle = "#185FA5";
+  ctx.font = "9px system-ui";
+  ctx.fillText(del + "s", tx(del) + 4, H - P - 4);
 }
 
-// ==================== COMPARISON ====================
-function plotComparison(time, sensorMeasured, results) {
-  const colors = ["#e03050", "#7048c8", "#e08000", "#0078c8"];
 
-  const datasets = [
-    {
-      label: "Medido",
-      data: sensorMeasured,
-      borderColor: "#1a9e5c",
-      borderWidth: 2,
-      pointRadius: 0,
-      tension: 0.12,
-    },
-    ...results.map((r, i) => ({
-      label: r.method,
-      data: r.simulated,
-      borderColor: colors[i] || "#999999",
-      borderWidth: 2,
-      borderDash: i > 0 ? [5, 4] : [],
-      pointRadius: 0,
-      tension: 0.12,
-    })),
-  ];
+/* ==================== PASO 3 · CAPTURA EN TIEMPO REAL ==================== */
+/**
+ * Pinta los canvas cAct y cSen con los primeros `n` puntos del sample store.
+ * Se llama desde websocket.js cada vez que llega una nueva muestra.
+ * Si `n` es null, pinta todo el buffer.
+ */
+function plotCapture(n) {
+  const store = State.sampleStore;
+  const type  = getSignalType();
 
-  if (window.State?.charts?.comparison)
-    window.State.charts.comparison.destroy();
+  const time     = store.time;
+  const actuator = type === "pct" ? store.actuator_pct : store.actuator_ma;
+  const sensor   = type === "pct" ? store.sensor_pct   : store.sensor_ma;
 
-  window.State.charts.comparison = new Chart(
-    document.getElementById("chartComparison"),
-    {
-      type: "line",
-      data: {
-        labels: time.map((v) => Number(v).toFixed(2)),
-        datasets,
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        animation: { duration: 350 },
-        plugins: {
-          legend: {
-            display: true,
-            labels: {
-              color: "#7a8fa0",
-              font: { family: "IBM Plex Sans", size: 9 },
-              boxWidth: 20,
-            },
-          },
-        },
-        scales: {
-          x: {
-            ticks: {
-              color: "#7a8fa0",
-              font: { family: "IBM Plex Mono", size: 9 },
-              maxTicksLimit: 10,
-            },
-            grid: { color: "rgba(160,180,200,0.25)" },
-          },
-          y: {
-            ticks: {
-              color: "#7a8fa0",
-              font: { family: "IBM Plex Mono", size: 9 },
-            },
-            grid: { color: "rgba(160,180,200,0.25)" },
-          },
-        },
-      },
-    },
-  );
+  const total = n == null ? time.length : n;
+  const labels = time.slice(0, total).map((v) => Number(v).toFixed(1));
+
+  drawTimeSeries("cAct", labels, actuator.slice(0, total), "#2a78d6");
+  drawTimeSeries("cSen", labels, sensor.slice(0, total),   "#1baf7a");
 }
 
-// ==================== BODE ====================
-function plotBode(result) {
-  if (!result) return;
+/** Helper interno — crea/actualiza un chart line simple. */
+function drawTimeSeries(canvasId, labels, data, color) {
+  const el = document.getElementById(canvasId);
+  if (!el) return;
 
-  const modelType = (result.model_type || "").toLowerCase();
-  const K = Number(result.gain ?? 1);
-  const L = Number(result.dead_time ?? 0);
+  if (State.charts[canvasId]) State.charts[canvasId].destroy();
 
-  const freq = [];
-  const mag = [];
-  const phase = [];
-
-  for (let i = -3; i <= 2; i += 0.03) {
-    const w = Math.pow(10, i);
-    freq.push(w);
-
-    let real = 0;
-    let imag = 0;
-
-    if (modelType === "fopdt") {
-      const tau = Number(result.tau ?? 1);
-      const denReal = 1;
-      const denImag = w * tau;
-      const denMag2 = denReal * denReal + denImag * denImag;
-
-      real = (K * denReal) / denMag2;
-      imag = (-K * denImag) / denMag2;
-    } else if (modelType === "sopdt") {
-      const tau1 = Number(result.tau1 ?? 1);
-      const tau2 = Number(result.tau2 ?? 1);
-
-      // G(jw)=K/((1+jw*t1)(1+jw*t2))
-      const a = 1 - w * tau1 * (w * tau2);
-      const b = w * (tau1 + tau2);
-      const denMag2 = a * a + b * b;
-
-      real = (K * a) / denMag2;
-      imag = (-K * b) / denMag2;
-    } else if (modelType === "integrating") {
-      // G(jw)=K/(jw)
-      real = 0;
-      imag = -K / w;
-    } else {
-      real = K;
-      imag = 0;
-    }
-
-    const magnitude = Math.sqrt(real * real + imag * imag);
-    const phaseDegBase = (Math.atan2(imag, real) * 180) / Math.PI;
-    const delayPhase = (-(w * L) * 180) / Math.PI;
-    const totalPhase = phaseDegBase + delayPhase;
-
-    mag.push(20 * Math.log10(Math.max(magnitude, 1e-12)));
-    phase.push(totalPhase);
-  }
-
-  if (window.State?.charts?.bode) window.State.charts.bode.destroy();
-
-  window.State.charts.bode = new Chart(document.getElementById("chartBode"), {
+  State.charts[canvasId] = new Chart(el, {
     type: "line",
     data: {
-      labels: freq.map((v) => v.toExponential(1)),
-      datasets: [
-        {
-          label: "Magnitud (dB)",
-          data: mag,
-          borderColor: "#0078c8",
-          borderWidth: 2,
-          pointRadius: 0,
-          yAxisID: "yMag",
-        },
-        {
-          label: "Fase (°)",
-          data: phase,
-          borderColor: "#e03050",
-          borderWidth: 2,
-          borderDash: [6, 3],
-          pointRadius: 0,
-          yAxisID: "yPhase",
-        },
-      ],
+      labels,
+      datasets: [{
+        data,
+        borderColor: color,
+        borderWidth: 2,
+        pointRadius: 0,
+        tension: 0.1
+      }]
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      animation: { duration: 350 },
-      plugins: {
-        legend: {
-          labels: {
-            color: "#7a8fa0",
-            font: { family: "IBM Plex Sans", size: 9 },
-          },
-        },
-      },
+      animation: false,
+      plugins: { legend: { display: false } },
       scales: {
         x: {
-          type: "category",
-          ticks: {
-            color: "#7a8fa0",
-            font: { family: "IBM Plex Mono", size: 9 },
-            maxTicksLimit: 12,
-          },
-          grid: { color: "rgba(160,180,200,0.25)" },
-          title: {
-            display: true,
-            text: "Frecuencia (rad/s)",
-            color: "#7a8fa0",
-            font: { family: "IBM Plex Sans", size: 9 },
-          },
+          ticks: { color: "#898781", font: { size: 9 }, maxTicksLimit: 10 },
+          grid:  { color: "rgba(0,0,0,0.05)" }
         },
-        yMag: {
-          position: "left",
-          ticks: {
-            color: "#0078c8",
-            font: { family: "IBM Plex Mono", size: 9 },
-          },
-          grid: { color: "rgba(160,180,200,0.25)" },
-          title: {
-            display: true,
-            text: "Magnitud (dB)",
-            color: "#0078c8",
-            font: { family: "IBM Plex Sans", size: 9 },
-          },
+        y: {
+          ticks: { color: "#898781", font: { size: 9 } },
+          grid:  { color: "rgba(0,0,0,0.05)" }
+        }
+      }
+    }
+  });
+}
+
+
+/* ==================== PASO 4 · MEDIDO VS MODELO ==================== */
+/**
+ * Dibuja en `#cCmp` la comparación entre la curva medida y la simulada.
+ */
+function plotComparison(time, measured, simulated) {
+  const el = document.getElementById("cCmp");
+  if (!el) return;
+
+  if (State.charts.cCmp) State.charts.cCmp.destroy();
+
+  State.charts.cCmp = new Chart(el, {
+    type: "line",
+    data: {
+      labels: time.map((v) => Number(v).toFixed(1)),
+      datasets: [
+        {
+          label: "Medido",
+          data: measured,
+          borderColor: "#1baf7a",
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.1
         },
-        yPhase: {
-          position: "right",
-          ticks: {
-            color: "#e03050",
-            font: { family: "IBM Plex Mono", size: 9 },
-          },
-          grid: { drawOnChartArea: false },
-          title: {
-            display: true,
-            text: "Fase (°)",
-            color: "#e03050",
-            font: { family: "IBM Plex Sans", size: 9 },
-          },
-        },
-      },
+        {
+          label: "Modelo",
+          data: simulated,
+          borderColor: "#eb6834",
+          borderWidth: 2,
+          borderDash: [5, 3],
+          pointRadius: 0,
+          tension: 0.1
+        }
+      ]
     },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: {
+          ticks: { color: "#898781", font: { size: 8 }, maxTicksLimit: 6 },
+          grid:  { color: "rgba(0,0,0,0.05)" }
+        },
+        y: {
+          ticks: { color: "#898781", font: { size: 8 } },
+          grid:  { color: "rgba(0,0,0,0.05)" }
+        }
+      }
+    }
   });
 }
