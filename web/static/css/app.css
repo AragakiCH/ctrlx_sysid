@@ -217,6 +217,14 @@ header {
   text-transform: none;
 }
 
+.mapping-legend {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10px;
+  line-height: 1.6;
+  color: var(--accent-mid);
+  word-break: break-word;
+}
+
 input[type="number"],
 input[type="text"],
 select,

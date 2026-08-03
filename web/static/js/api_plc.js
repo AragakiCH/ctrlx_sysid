@@ -201,53 +201,79 @@ function handleLatest(data) {
   console.log("latest:", data);
 }
 
+// ==================== MAPEO DE SEÑALES ====================
+// El mapeo rol -> variable lo eligió el usuario en el login y viaja
+// en cada sample (`data.mapping`). No hay nombres hardcodeados aquí.
+let SignalMapping = readStoredMapping();
+
+function readStoredMapping() {
+  try {
+    const stored = localStorage.getItem("plcMapping");
+    return stored ? JSON.parse(stored) : {};
+  } catch (err) {
+    console.warn("No se pudo leer plcMapping de localStorage:", err);
+    return {};
+  }
+}
+
+function updateSignalMapping(mapping) {
+  if (!mapping || typeof mapping !== "object") return;
+
+  SignalMapping = mapping;
+
+  try {
+    localStorage.setItem("plcMapping", JSON.stringify(mapping));
+  } catch (err) {
+    console.warn("No se pudo guardar plcMapping:", err);
+  }
+
+  renderMappingLegend(mapping);
+}
+
+function renderMappingLegend(mapping) {
+  const el = document.getElementById("mappingLegend");
+  if (!el) return;
+
+  const labels = {
+    time: "Tiempo",
+    actuator: "Actuador",
+    sensor: "Sensor",
+    setpoint: "Setpoint",
+    signal_type: "Tipo",
+  };
+
+  el.textContent = Object.keys(labels)
+    .filter((k) => mapping[k])
+    .map((k) => `${labels[k]}: ${mapping[k]}`)
+    .join("  ·  ");
+}
+
+// Resuelve el valor de un rol: primero el campo normalizado por el backend,
+// y si no, la variable cruda que el usuario mapeó a ese rol.
+function valueForRole(data, role) {
+  const direct = pickNumber(data[role]);
+  if (direct !== null) return direct;
+
+  const mapping = data.mapping || SignalMapping || {};
+  const variableName = mapping[role];
+
+  if (variableName && data.raw && variableName in data.raw) {
+    return pickNumber(data.raw[variableName]);
+  }
+
+  return null;
+}
+
 // ==================== SAMPLE -> VISTA SEÑALES ====================
-// Espera algo como:
-// {
-//   actuator: 12,
-//   actuator_pct: 50,
-//   sensor: 7.21,
-//   sensor_pct: 20.06,
-//   setpoint: 12,
-//   setpoint_pct: 50,
-//   time: 5.99,
-//   raw: {
-//     rActuator: 12,
-//     rSensor: 7.21,
-//     rSetPoint: 12,
-//     rTimeSec: 5.99
-//   }
-// }
 function handleSample(data) {
-  const raw = data.raw || {};
+  if (data.mapping) {
+    updateSignalMapping(data.mapping);
+  }
 
-  const timeValue = pickNumber(
-    data.time,
-    raw.rTimeSec,
-    raw.rTiempoSeg,
-    raw.arrTimeSec,
-  );
-
-  const actuatorMa = pickNumber(
-    data.actuator,
-    raw.rActuator,
-    raw.AO_Actuador_mA,
-    raw.AO_Actuador,
-  );
-
-  const sensorMa = pickNumber(
-    data.sensor,
-    raw.rSensor,
-    raw.AI_Sensor_mA,
-    raw.AI_Sensor,
-  );
-
-  const setpointMa = pickNumber(
-    data.setpoint,
-    raw.rSetPoint,
-    raw.SP_mA,
-    raw.SP,
-  );
+  const timeValue = valueForRole(data, "time");
+  const actuatorMa = valueForRole(data, "actuator");
+  const sensorMa = valueForRole(data, "sensor");
+  const setpointMa = valueForRole(data, "setpoint");
 
   const actuatorPct = pickNumber(data.actuator_pct);
   const sensorPct = pickNumber(data.sensor_pct);
@@ -377,11 +403,21 @@ function handleIdentificationResult(data) {
     hideLoading(); // 🔥 SIEMPRE se ejecuta
   }
 
-  // Solo si el backend manda curvas simuladas
-  const measuredTime = parseTextareaNumbers("dataTime");
-  const measuredSensor = parseTextareaNumbers("dataSensor");
+  // El medido debe ser la MISMA ventana que se usó para identificar,
+  // no el buffer completo: si no, las longitudes no cuadran con `simulated`.
+  const win = data.window || {};
+  const measuredTime = Array.isArray(win.time)
+    ? win.time
+    : parseTextareaNumbers("dataTime");
+  const measuredSensor = Array.isArray(win.sensor)
+    ? win.sensor
+    : parseTextareaNumbers("dataSensor");
+
   const plottable = normalized.filter(
-    (x) => Array.isArray(x.simulated) && x.simulated.length,
+    (x) =>
+      Array.isArray(x.simulated) &&
+      x.simulated.length === measuredTime.length &&
+      x.simulated.length > 0,
   );
 
   if (
@@ -414,6 +450,8 @@ function normalizeModelResult(model) {
     tau1: asNumber(model.tau1),
     tau2: asNumber(model.tau2),
     tf_string: model.tf_string || "—",
+    numerator: Array.isArray(model.numerator) ? model.numerator : [],
+    denominator: Array.isArray(model.denominator) ? model.denominator : [],
     pid_tunings: Array.isArray(model.pid_tunings) ? model.pid_tunings : [],
     simulated: Array.isArray(model.simulated) ? model.simulated : null,
   };
@@ -553,6 +591,8 @@ function renderPidSection(winner) {
     .map((t) => {
       const method = t.method || t.name || "Método";
       const kp = formatNumber(t.kp ?? t.Kp, 4);
+      const ti = formatNumber(t.ti ?? t.Ti, 4);
+      const td = formatNumber(t.td ?? t.Td, 4);
       const ki = formatNumber(t.ki ?? t.Ki, 4);
       const kd = formatNumber(t.kd ?? t.Kd, 4);
       const desc = t.description || t.desc || "—";
@@ -561,6 +601,8 @@ function renderPidSection(winner) {
       <tr>
         <td class="td-method">${escapeHtml(method)}</td>
         <td class="td-value">${kp}</td>
+        <td class="td-value">${ti}</td>
+        <td class="td-value">${td}</td>
         <td class="td-value">${ki}</td>
         <td class="td-value">${kd}</td>
         <td class="td-desc">${escapeHtml(desc)}</td>
@@ -576,6 +618,8 @@ function renderPidSection(winner) {
           <tr>
             <th>Método</th>
             <th>Kp</th>
+            <th>Ti (s)</th>
+            <th>Td (s)</th>
             <th>Ki</th>
             <th>Kd</th>
             <th>Descripción</th>
@@ -744,6 +788,7 @@ function showPidLoader() {
 
 document.addEventListener("DOMContentLoaded", () => {
   setConnectionStatus(false);
+  renderMappingLegend(SignalMapping);
   const signalTypeSelect = document.getElementById("signalType");
   if (signalTypeSelect) {
     signalTypeSelect.addEventListener("change", () => {

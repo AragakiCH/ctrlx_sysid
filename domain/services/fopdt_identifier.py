@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+import math
+
 from domain.models.identification_result import IdentificationResult
 from domain.models.transfer_function import TransferFunctionModel
+from domain.services.fit_metrics import r_squared
 from domain.services.signal_processor import SignalProcessor
 
 
 class FOPDTIdentifier:
+    """
+    Identifica K*exp(-Ls)/(tau*s+1) por el método de los dos puntos
+    (28.3% y 63.2% del cambio total), de Smith.
+    """
+
     @staticmethod
     def _find_time_at_fraction(
         time_data: list[float],
@@ -15,18 +23,65 @@ class FOPDTIdentifier:
         fraction: float,
         start_index: int = 0,
     ) -> float | None:
+        """
+        Instante en que la salida cruza `fraction` del recorrido total.
+        Interpola linealmente entre muestras para no quedar atado al
+        periodo de muestreo.
+        """
         target = initial_y + fraction * (final_y - initial_y)
+        rising = final_y >= initial_y
 
         for i in range(start_index, len(sensor_data)):
             y = sensor_data[i]
 
-            if (final_y >= initial_y and y >= target) or (final_y < initial_y and y <= target):
-                return time_data[i]
+            if (rising and y >= target) or (not rising and y <= target):
+                if i == start_index:
+                    return time_data[i]
+
+                y_prev = sensor_data[i - 1]
+                denom = y - y_prev
+
+                if abs(denom) < 1e-12:
+                    return time_data[i]
+
+                frac = (target - y_prev) / denom
+                frac = min(max(frac, 0.0), 1.0)
+                return time_data[i - 1] + frac * (time_data[i] - time_data[i - 1])
 
         return None
 
     @staticmethod
+    def delayed_input(
+        time_data: list[float],
+        actuator_data: list[float],
+        dead_time: float,
+        initial_u: float,
+    ) -> list[float]:
+        """u(t - L), usando retención de orden cero entre muestras."""
+        delayed: list[float] = []
+        u_index = 0
+        t0 = time_data[0]
+
+        for t in time_data:
+            effective_time = t - dead_time
+
+            if effective_time < t0:
+                delayed.append(initial_u)
+                continue
+
+            while (
+                u_index + 1 < len(time_data)
+                and time_data[u_index + 1] <= effective_time
+            ):
+                u_index += 1
+
+            delayed.append(actuator_data[u_index])
+
+        return delayed
+
+    @classmethod
     def simulate_response(
+        cls,
         time_data: list[float],
         gain: float,
         tau: float,
@@ -35,43 +90,39 @@ class FOPDTIdentifier:
         initial_y: float,
         actuator_data: list[float],
     ) -> list[float]:
+        """
+        Integra el modelo de primer orden contra el actuador real.
+
+        Se hace de forma recursiva (y[i+1] = y_ss + (y[i]-y_ss)*e^(-dt/tau))
+        en vez de aplicar la fórmula del escalón desde t0. Esto importa
+        porque la ventana de identificación incluye muestras ANTES del
+        escalón: con la fórmula cerrada el exponencial arrancaba en
+        time_data[0] y la curva simulada quedaba desfasada.
+
+        Además es O(n) y admite cualquier forma de u(t), no solo un escalón.
+        """
+        if not time_data:
+            return []
+
         if tau <= 1e-9:
             return [initial_y for _ in time_data]
 
-        simulated = []
+        delayed = cls.delayed_input(time_data, actuator_data, dead_time, initial_u)
 
-        for t in time_data:
-            effective_time = t - dead_time
+        simulated = [initial_y]
 
-            if effective_time <= time_data[0]:
-                simulated.append(initial_y)
-                continue
-
-            u = initial_u
-            for i in range(len(time_data)):
-                if time_data[i] <= effective_time:
-                    u = actuator_data[i]
-                else:
-                    break
-
-            y = initial_y + gain * (u - initial_u) * (1.0 - pow(2.718281828, -(effective_time - time_data[0]) / tau))
-            simulated.append(y)
+        for i in range(1, len(time_data)):
+            dt = time_data[i] - time_data[i - 1]
+            # valor de régimen permanente para la entrada actual
+            y_ss = initial_y + gain * (delayed[i] - initial_u)
+            decay = math.exp(-dt / tau) if dt > 0 else 1.0
+            simulated.append(y_ss + (simulated[-1] - y_ss) * decay)
 
         return simulated
 
     @staticmethod
     def calculate_r2(measured: list[float], simulated: list[float]) -> float:
-        if not measured or not simulated or len(measured) != len(simulated):
-            return 0.0
-
-        y_mean = sum(measured) / len(measured)
-        ss_tot = sum((y - y_mean) ** 2 for y in measured)
-        ss_res = sum((measured[i] - simulated[i]) ** 2 for i in range(len(measured)))
-
-        if ss_tot <= 1e-12:
-            return 0.0
-
-        return 1.0 - (ss_res / ss_tot)
+        return r_squared(measured, simulated)
 
     def identify(
         self,
@@ -117,7 +168,7 @@ class FOPDTIdentifier:
             actuator_data=actuator_data,
         )
 
-        fit_quality = self.calculate_r2(sensor_data, simulated)
+        fit_quality = r_squared(sensor_data, simulated)
 
         model = TransferFunctionModel(
             model_type="fopdt",

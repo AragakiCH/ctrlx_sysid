@@ -4,6 +4,11 @@ import threading
 import time
 from typing import Callable, Optional
 
+from infrastructure.ctrlx.node_repository import (
+    SIGNAL_ROLES,
+    NodeRepository,
+    suggest_mapping,
+)
 from infrastructure.ctrlx.opcua_client import CtrlxOpcUaClient
 from infrastructure.ctrlx.plc_reader import PLCReader
 
@@ -26,6 +31,7 @@ class OpcUaSessionService:
         self._current_user: Optional[str] = None
         self._current_password: Optional[str] = None
         self._current_program_name: Optional[str] = None
+        self._current_mapping: Optional[dict[str, Optional[str]]] = None
 
         self._last_error: Optional[str] = None
         self._last_login_ts: Optional[float] = None
@@ -81,43 +87,15 @@ class OpcUaSessionService:
             opc.connect()
             print("[DISCOVER] OPC UA connect OK")
 
-            root = opc.get_root_node()
-
-            sym_node = opc.browse_by_names(
-                root,
-                "Objects",
-                "Datalayer",
-                "plc",
-                "app",
-                "Application",
-                "sym",
-            )
-
-            if sym_node is None:
-                raise RuntimeError(
-                    "Conectó al OPC UA, pero no se encontró el nodo 'sym'."
-                )
-
-            children = sym_node.get_children()
-            if not children:
-                raise RuntimeError(
-                    "Conectó al OPC UA, pero el nodo 'sym' no tiene programas expuestos."
-                )
-
-            programs = []
-            for child in children:
-                try:
-                    browse_name = child.get_browse_name().Name
-                    if browse_name:
-                        programs.append(browse_name)
-                        print(f"[DISCOVER] Programa encontrado: {browse_name}")
-                except Exception as exc:
-                    print(f"[DISCOVER] No se pudo leer browse_name de un hijo: {exc}")
+            programs = NodeRepository(opc).list_programs()
 
             if not programs:
                 raise RuntimeError(
                     "Se encontró el nodo 'sym', pero no se pudieron identificar programas válidos."
                 )
+
+            for name in programs:
+                print(f"[DISCOVER] Programa encontrado: {name}")
 
             return programs
 
@@ -131,10 +109,55 @@ class OpcUaSessionService:
             except Exception as exc:
                 print(f"[DISCOVER] Error al desconectar OPC UA: {exc}")
 
+    def _discover_variables(
+        self,
+        url: str,
+        user: str,
+        password: str,
+        program_name: str,
+    ) -> list[dict]:
+        """Trae TODAS las variables del programa elegido, sin filtrar por nombre."""
+        opc = CtrlxOpcUaClient(url=url, user=user, password=password)
 
+        try:
+            print(f"[VARS] Leyendo variables de '{program_name}' en {url}")
+            opc.connect()
 
+            repo = NodeRepository(opc)
+            program_node = repo.resolve_program_node(program_name)
 
-    def login(self, url: str, user: str, password: str, program_name: str) -> dict:
+            if program_node is None:
+                raise RuntimeError(
+                    f"Conectó al OPC UA, pero no se encontró el programa '{program_name}' dentro de 'sym'."
+                )
+
+            variables = repo.list_variables(program_node, include_values=True)
+
+            if not variables:
+                raise RuntimeError(
+                    f"El programa '{program_name}' no expone variables legibles."
+                )
+
+            print(f"[VARS] {len(variables)} variables encontradas")
+            return [v.to_dict() for v in variables]
+
+        except Exception as exc:
+            print(f"[VARS] ERROR REAL: {exc}")
+            raise
+
+        finally:
+            try:
+                opc.disconnect()
+            except Exception as exc:
+                print(f"[VARS] Error al desconectar OPC UA: {exc}")
+
+    def discover_variables(
+        self,
+        url: str,
+        user: str,
+        password: str,
+        program_name: str,
+    ) -> dict:
         clean_url = (url or "").strip()
         clean_user = (user or "").strip()
         clean_password = password or ""
@@ -148,6 +171,52 @@ class OpcUaSessionService:
             raise ValueError("Falta la contraseña OPC UA.")
         if not clean_program_name:
             raise ValueError("Falta seleccionar el programa OPC UA.")
+
+        variables = self._discover_variables(
+            url=clean_url,
+            user=clean_user,
+            password=clean_password,
+            program_name=clean_program_name,
+        )
+
+        names = [v["name"] for v in variables]
+
+        return {
+            "ok": True,
+            "url": clean_url,
+            "user": clean_user,
+            "program_name": clean_program_name,
+            "roles": list(SIGNAL_ROLES),
+            "variables": variables,
+            "suggested_mapping": suggest_mapping(names),
+        }
+
+    def login(
+        self,
+        url: str,
+        user: str,
+        password: str,
+        program_name: str,
+        mapping: Optional[dict] = None,
+    ) -> dict:
+        clean_url = (url or "").strip()
+        clean_user = (user or "").strip()
+        clean_password = password or ""
+        clean_program_name = (program_name or "").strip()
+
+        if not clean_url:
+            raise ValueError("Falta la URL OPC UA.")
+        if not clean_user:
+            raise ValueError("Falta el usuario OPC UA.")
+        if not clean_password:
+            raise ValueError("Falta la contraseña OPC UA.")
+        if not clean_program_name:
+            raise ValueError("Falta seleccionar el programa OPC UA.")
+
+        clean_mapping: dict[str, Optional[str]] = {}
+        for role in SIGNAL_ROLES:
+            value = (mapping or {}).get(role)
+            clean_mapping[role] = value.strip() if isinstance(value, str) and value.strip() else None
 
         self._validate_connection(
             url=clean_url,
@@ -172,6 +241,7 @@ class OpcUaSessionService:
             self._current_user = clean_user
             self._current_password = clean_password
             self._current_program_name = clean_program_name
+            self._current_mapping = clean_mapping
             self._last_error = None
             self._last_login_ts = time.time()
 
@@ -182,6 +252,7 @@ class OpcUaSessionService:
                 program_name=clean_program_name,
                 on_sample=self._on_sample,
                 period_s=self._period_s,
+                mapping=clean_mapping,
             )
             self._reader.start()
 
@@ -190,9 +261,29 @@ class OpcUaSessionService:
                 "url": self._current_url,
                 "user": self._current_user,
                 "program_name": self._current_program_name,
+                "mapping": self._current_mapping,
                 "started": True,
             }
-        
+
+    def update_mapping(self, mapping: Optional[dict]) -> dict:
+        """Cambia el mapeo rol -> variable en caliente, sin reconectar."""
+        clean_mapping: dict[str, Optional[str]] = {}
+        for role in SIGNAL_ROLES:
+            value = (mapping or {}).get(role)
+            clean_mapping[role] = value.strip() if isinstance(value, str) and value.strip() else None
+
+        with self._lock:
+            if self._reader is None:
+                raise ValueError("No hay sesión OPC UA activa.")
+
+            self._current_mapping = clean_mapping
+            self._reader.set_mapping(clean_mapping)
+
+            if self._reset_runtime_state is not None:
+                self._reset_runtime_state()
+
+            return {"ok": True, "mapping": clean_mapping}
+
     def discover_programs(self, url: str, user: str, password: str) -> dict:
         clean_url = (url or "").strip()
         clean_user = (user or "").strip()
@@ -232,8 +323,9 @@ class OpcUaSessionService:
             self._current_user = None
             self._current_password = None
             self._current_program_name = None
+            self._current_mapping = None
             self._last_login_ts = None
-            
+
 
             if clear_runtime and self._reset_runtime_state is not None:
                 self._reset_runtime_state()
@@ -257,11 +349,7 @@ class OpcUaSessionService:
         has_identification: bool = False,
     ) -> dict:
         with self._lock:
-            reader_running = bool(
-                self._reader is not None
-                and self._reader._thread is not None
-                and self._reader._thread.is_alive()
-            )
+            reader_running = bool(self._reader is not None and self._reader.is_running)
 
             return {
                 "authenticated": bool(self._current_url and self._current_user),
@@ -274,6 +362,7 @@ class OpcUaSessionService:
                 "last_error": self._last_error,
                 "last_login_ts": self._last_login_ts,
                 "program_name": self._current_program_name,
+                "mapping": self._current_mapping,
             }
 
     @property

@@ -29,6 +29,10 @@
       <aside class="sidebar">
         <div class="section-header">Señales de Entrada</div>
         <div class="input-group">
+          <label>Variables mapeadas <span class="label-unit">PLC</span></label>
+          <div id="mappingLegend" class="mapping-legend">—</div>
+        </div>
+        <div class="input-group">
           <label>Tipo de Señal <span class="label-unit">PLC I/O</span></label>
           <select id="signalType" onchange="updateSignalLabels()">
             <option value="ma">4-20 mA (Corriente)</option>

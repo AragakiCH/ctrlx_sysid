@@ -159,6 +159,75 @@ select option {
         align-items: center;
       }
 
+/* ==================== MAPEO DE SEÑALES ==================== */
+
+/* El grupo de mapeo tiene varios selects: la flecha global no aplica aquí */
+#mappingGroup::after {
+    content: none !important;
+}
+
+.mapping-hint {
+    font-size: 11px;
+    color: var(--rex-label-gray);
+    margin: 0 0 10px 0;
+    line-height: 1.4;
+}
+
+.mapping-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 260px;
+    overflow-y: auto;
+}
+
+.mapping-field {
+    display: flex;
+    flex-direction: column;
+    position: relative;
+}
+
+.mapping-field label {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--rex-label-gray);
+    margin-bottom: 2px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.mapping-select {
+    width: 100%;
+    min-width: 0;
+    border: none;
+    border-bottom: 1px solid #d4d8dd;
+    background: transparent;
+    font-family: inherit;
+    font-size: 13px;
+    color: #333;
+    padding: 5px 20px 5px 0;
+    outline: none;
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+}
+
+.mapping-select:focus {
+    border-bottom-color: var(--rex-blue);
+}
+
+.mapping-field::after {
+    content: '\f078';
+    font-family: 'Font Awesome 6 Free';
+    font-weight: 900;
+    position: absolute;
+    right: 6px;
+    bottom: 8px;
+    font-size: 10px;
+    color: var(--rex-blue);
+    pointer-events: none;
+}
+
 
 .error-banner {
     background-color: var(--rex-error-bg);

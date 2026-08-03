@@ -1,0 +1,1625 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ctrlX System Identification API",
+    "description": "\nIdentificación de sistemas y sintonía PID sobre un ctrlX Core X3.\n\nLee señales de un programa PLC por OPC UA, detecta escalones en el actuador\ny ajusta modelos FOPDT, SOPDT e integrador, entregando las constantes PID.\n\n## Flujo de conexión\n\nLos endpoints están pensados para usarse en este orden:\n\n1. `GET  /api/opcua/discover` — buscar dispositivos en la red\n2. `POST /api/opcua/discover-programs` — listar programas del PLC\n3. `POST /api/opcua/discover-variables` — listar **todas** las variables del programa\n4. `POST /api/opcua/login` — abrir sesión con el mapeo elegido\n5. `WS   /ws` — recibir muestras y resultados en tiempo real\n\n## Unidades\n\nCada muestra viaja en dos escalas:\n\n- `actuator`, `sensor`, `setpoint`: el valor **crudo** tal como está en el PLC\n- `actuator_pct`, `sensor_pct`, `setpoint_pct`: convertido a **0-100 %**\n\nLa conversión de 4-20 mA a porcentaje solo se aplica si la variable mapeada\ncomo `signal_type` vale `1`. En cualquier otro caso los campos `_pct` repiten\nel valor crudo.\n\n## WebSocket\n\nSwagger no documenta WebSockets. El protocolo completo de `/ws` está en el\n`README.md` del repositorio.\n",
+    "contact": {
+      "name": "Equipo ctrlX SysID"
+    },
+    "version": "1.1.0"
+  },
+  "paths": {
+    "/api/opcua/discover": {
+      "get": {
+        "tags": [
+          "OPC UA"
+        ],
+        "summary": "Buscar servidores OPC UA en la red",
+        "description": "Sondea candidatos y devuelve cuáles respondieron en el puerto TCP.\n\nLos candidatos salen de, en este orden:\n1. El host del propio request (si no es localhost).\n2. La variable de entorno `OPCUA_DISCOVERY_URLS` (separada por comas).\n3. Los fallbacks `127.0.0.1`, `localhost` y `192.168.1.1`, todos en el 4840.\n\nLos que tienen `tcp_ok: true` van primero. **No requiere credenciales.**",
+        "operationId": "discover_opcua_api_opcua_discover_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/OpcUaDiscoverItem"
+                  },
+                  "type": "array",
+                  "title": "Response Discover Opcua Api Opcua Discover Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/opcua/discover-programs": {
+      "post": {
+        "tags": [
+          "OPC UA"
+        ],
+        "summary": "Listar los programas PLC del dispositivo",
+        "description": "Conecta con las credenciales dadas y devuelve los programas colgados de\n`Objects/Datalayer/plc/app/Application/sym`.\n\nEs el **paso 2** del flujo: sirve para llenar el desplegable de programas.",
+        "operationId": "discover_programs_api_opcua_discover_programs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpcUaDiscoverProgramsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoverProgramsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Faltan datos o son inválidos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Fallo al hablar con el PLC",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/opcua/discover-variables": {
+      "post": {
+        "tags": [
+          "OPC UA"
+        ],
+        "summary": "Listar TODAS las variables de un programa",
+        "description": "Devuelve todas las variables del programa con su tipo y su valor actual,\n**sin filtrar por nombre**. La vista decide cuál es actuador, sensor,\nsetpoint, tiempo y tipo de señal.\n\n`suggested_mapping` trae una propuesta basada en los nombres clásicos\n(`rActuator`, `rSensor`, ...) para pre-seleccionar los desplegables. Es\nsolo una sugerencia: si el programa usa otros nombres, esos roles vienen\nen `null` y los elige el usuario.\n\nEs el **paso 3** del flujo.",
+        "operationId": "discover_variables_api_opcua_discover_variables_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpcUaDiscoverVariablesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoverVariablesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Faltan datos o son inválidos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Fallo al hablar con el PLC",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/opcua/login": {
+      "post": {
+        "tags": [
+          "OPC UA"
+        ],
+        "summary": "Abrir sesión y arrancar la lectura cíclica",
+        "description": "Valida la conexión, guarda el mapeo y arranca el hilo que lee el PLC\ncada 200 ms. A partir de aquí el WebSocket empieza a emitir `sample`.\n\nLimpia el buffer y cualquier identificación previa.\n\nEl campo `mapping` es opcional; los roles que se omitan se resuelven con\nlos alias por defecto. `mapping` en la respuesta es el **mapeo efectivo**,\nya completado.\n\nEs el **paso 4** del flujo.",
+        "operationId": "opcua_login_api_opcua_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpcUaLoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Faltan datos o son inválidos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Fallo al hablar con el PLC",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/opcua/mapping": {
+      "post": {
+        "tags": [
+          "OPC UA"
+        ],
+        "summary": "Cambiar el mapeo de señales en caliente",
+        "description": "Reasigna qué variable cumple cada rol sin cerrar la sesión ni reconectar.\n\n**Limpia el buffer y descarta la identificación en curso**, porque las\nmuestras viejas fueron tomadas con otro mapeo y mezclarlas daría un\nmodelo sin sentido.\n\nDevuelve 400 si no hay sesión activa.",
+        "operationId": "update_mapping_api_opcua_mapping_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpcUaMappingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MappingResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Faltan datos o son inválidos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Fallo al hablar con el PLC",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/opcua/logout": {
+      "post": {
+        "tags": [
+          "OPC UA"
+        ],
+        "summary": "Cerrar sesión y detener la lectura",
+        "description": "Para el hilo de lectura, borra credenciales y mapeo, y limpia el buffer.\nEs idempotente: llamarlo sin sesión activa igual devuelve `ok: true`.",
+        "operationId": "opcua_logout_api_opcua_logout_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogoutResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/opcua/status": {
+      "get": {
+        "tags": [
+          "OPC UA"
+        ],
+        "summary": "Estado de la sesión OPC UA",
+        "description": "Útil para diagnosticar. Ojo con la diferencia entre los dos flags:\n\n- `authenticated`: hay credenciales cargadas.\n- `connected`: el hilo de lectura está **vivo ahora mismo**.\n\nPueden diferir: si se cae la red, `authenticated` sigue en `true` mientras\nel lector reintenta con backoff exponencial.",
+        "operationId": "opcua_status_api_opcua_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/identification/latest": {
+      "get": {
+        "tags": [
+          "Identificación"
+        ],
+        "summary": "Último resultado de identificación",
+        "description": "Devuelve el resultado más reciente.\n\n**Es el mismo payload** que el WebSocket empuja en el mensaje\n`{\"type\": \"identification_result\"}`. Existe para poder inspeccionarlo\ndesde Swagger o Postman sin tener que abrir una conexión WebSocket.\n\nLa identificación es automática: el backend la dispara solo cuando\ndetecta un escalón en el actuador. Si nunca hubo uno, responde 404.",
+        "operationId": "latest_identification_api_identification_latest_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentificationResult"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Todavía no se ha identificado ningún modelo",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "Sistema"
+        ],
+        "summary": "Estado del servicio",
+        "description": "Chequeo rápido de vida. Responde 200 aunque no haya sesión OPC UA:\nel servicio está arriba, simplemente sin datos.\n\n`use_percent` indica si las señales se están convirtiendo de 4-20 mA a\n0-100 %. Depende de la variable mapeada como `signal_type`: si vale 1,\nse convierte.",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/": {
+      "get": {
+        "tags": [
+          "Vistas"
+        ],
+        "summary": "Pantalla de login",
+        "description": "Formulario de conexión: host, credenciales, programa y mapeo de señales.",
+        "operationId": "home__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/app": {
+      "get": {
+        "tags": [
+          "Vistas"
+        ],
+        "summary": "Aplicación principal",
+        "description": "Gráficos en tiempo real, resultados de identificación, sintonía PID y Bode.",
+        "operationId": "app_view_app_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "DiscoverProgramsResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "user": {
+            "type": "string",
+            "title": "User"
+          },
+          "programs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Programs",
+            "description": "Programas colgados del nodo 'sym'"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "url",
+          "user",
+          "programs"
+        ],
+        "title": "DiscoverProgramsResponse",
+        "example": {
+          "ok": true,
+          "programs": [
+            "PLC_PRG",
+            "PRG_Horno"
+          ],
+          "url": "opc.tcp://192.168.1.1:4840",
+          "user": "boschrexroth"
+        }
+      },
+      "DiscoverVariablesResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "user": {
+            "type": "string",
+            "title": "User"
+          },
+          "program_name": {
+            "type": "string",
+            "title": "Program Name"
+          },
+          "roles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Roles",
+            "description": "Roles que espera el backend"
+          },
+          "variables": {
+            "items": {
+              "$ref": "#/components/schemas/PlcVariable"
+            },
+            "type": "array",
+            "title": "Variables"
+          },
+          "suggested_mapping": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Suggested Mapping"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "url",
+          "user",
+          "program_name",
+          "roles",
+          "variables",
+          "suggested_mapping"
+        ],
+        "title": "DiscoverVariablesResponse",
+        "description": "Todas las variables del programa, sin filtrar por nombre.\n\n`suggested_mapping` es solo una sugerencia para pre-seleccionar los\ndesplegables: la vista decide el mapeo final.",
+        "example": {
+          "ok": true,
+          "program_name": "PLC_PRG",
+          "roles": [
+            "time",
+            "actuator",
+            "sensor",
+            "setpoint",
+            "signal_type"
+          ],
+          "suggested_mapping": {
+            "actuator": "rActuator",
+            "sensor": "rSensor",
+            "setpoint": "rSetPoint",
+            "time": "rTimeSec"
+          },
+          "url": "opc.tcp://192.168.1.1:4840",
+          "user": "boschrexroth",
+          "variables": [
+            {
+              "data_type": "Float",
+              "name": "rActuator",
+              "node_id": "ns=2;s=.../rActuator",
+              "numeric": true,
+              "readable": true,
+              "value": 12.0
+            },
+            {
+              "data_type": "Float",
+              "name": "rSensor",
+              "node_id": "ns=2;s=.../rSensor",
+              "numeric": true,
+              "readable": true,
+              "value": 7.21
+            }
+          ]
+        }
+      },
+      "ErrorResponse": {
+        "properties": {
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail"
+        ],
+        "title": "ErrorResponse",
+        "description": "Formato de error de FastAPI.",
+        "example": {
+          "detail": "Falta la URL OPC UA."
+        }
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "buffer_size": {
+            "type": "integer",
+            "title": "Buffer Size"
+          },
+          "has_latest": {
+            "type": "boolean",
+            "title": "Has Latest"
+          },
+          "has_identification": {
+            "type": "boolean",
+            "title": "Has Identification"
+          },
+          "opcua_authenticated": {
+            "type": "boolean",
+            "title": "Opcua Authenticated"
+          },
+          "opcua_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opcua Url"
+          },
+          "opcua_user": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opcua User"
+          },
+          "use_percent": {
+            "type": "boolean",
+            "title": "Use Percent",
+            "description": "True si las señales se están normalizando a 0-100 %"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "buffer_size",
+          "has_latest",
+          "has_identification",
+          "opcua_authenticated",
+          "opcua_url",
+          "opcua_user",
+          "use_percent"
+        ],
+        "title": "HealthResponse"
+      },
+      "IdentificationResult": {
+        "properties": {
+          "step_index": {
+            "type": "integer",
+            "title": "Step Index",
+            "description": "Índice del escalón dentro de la serie completa"
+          },
+          "winner": {
+            "type": "string",
+            "title": "Winner",
+            "description": "model_type del modelo con mejor R²"
+          },
+          "window": {
+            "$ref": "#/components/schemas/IdentificationWindow"
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/ModelResult"
+            },
+            "type": "array",
+            "title": "Models",
+            "description": "Ordenados de mejor a peor R²"
+          }
+        },
+        "type": "object",
+        "required": [
+          "step_index",
+          "winner",
+          "window",
+          "models"
+        ],
+        "title": "IdentificationResult",
+        "example": {
+          "models": [],
+          "step_index": 30,
+          "window": {
+            "actuator": [
+              4.0,
+              4.0,
+              12.0
+            ],
+            "count": 3,
+            "sensor": [
+              8.0,
+              8.0,
+              8.31
+            ],
+            "setpoint": [
+              12.0,
+              12.0,
+              12.0
+            ],
+            "time": [
+              0.0,
+              0.5,
+              1.0
+            ]
+          },
+          "winner": "fopdt"
+        }
+      },
+      "IdentificationWindow": {
+        "properties": {
+          "time": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Time"
+          },
+          "actuator": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Actuator"
+          },
+          "sensor": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Sensor"
+          },
+          "setpoint": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Setpoint"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "time",
+          "actuator",
+          "sensor",
+          "setpoint",
+          "count"
+        ],
+        "title": "IdentificationWindow",
+        "description": "Tramo de datos usado para identificar.\n\nEs un recorte alrededor del escalón, NO el buffer completo. La UI lo\nnecesita para graficar medido contra simulado: las longitudes tienen\nque coincidir. El tiempo viene re-basado a 0 en el inicio de la ventana."
+      },
+      "LoginResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "user": {
+            "type": "string",
+            "title": "User"
+          },
+          "program_name": {
+            "type": "string",
+            "title": "Program Name"
+          },
+          "mapping": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Mapping",
+            "description": "Mapeo efectivo tras completar con alias los roles vacíos"
+          },
+          "started": {
+            "type": "boolean",
+            "title": "Started",
+            "description": "True si el hilo de lectura cíclica arrancó"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "url",
+          "user",
+          "program_name",
+          "mapping",
+          "started"
+        ],
+        "title": "LoginResponse",
+        "example": {
+          "mapping": {
+            "actuator": "rActuator",
+            "sensor": "rSensor",
+            "setpoint": "rSetPoint",
+            "signal_type": "uiSignalType",
+            "time": "rTimeSec"
+          },
+          "ok": true,
+          "program_name": "PLC_PRG",
+          "started": true,
+          "url": "opc.tcp://192.168.1.1:4840",
+          "user": "boschrexroth"
+        }
+      },
+      "LogoutResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "logged_out": {
+            "type": "boolean",
+            "title": "Logged Out"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "logged_out"
+        ],
+        "title": "LogoutResponse"
+      },
+      "MappingResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "mapping": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Mapping"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "mapping"
+        ],
+        "title": "MappingResponse"
+      },
+      "ModelResult": {
+        "properties": {
+          "model_type": {
+            "type": "string",
+            "title": "Model Type",
+            "description": "fopdt | sopdt | integrating"
+          },
+          "gain": {
+            "type": "number",
+            "title": "Gain",
+            "description": "Ganancia K del proceso"
+          },
+          "dead_time": {
+            "type": "number",
+            "title": "Dead Time",
+            "description": "Tiempo muerto L, en segundos"
+          },
+          "fit_quality": {
+            "type": "number",
+            "title": "Fit Quality",
+            "description": "R² en escala 0-1. Puede ser NEGATIVO si el modelo ajusta peor que la media."
+          },
+          "tf_string": {
+            "type": "string",
+            "title": "Tf String",
+            "description": "Función de transferencia legible"
+          },
+          "numerator": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Numerator"
+          },
+          "denominator": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Denominator"
+          },
+          "simulated": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Simulated",
+            "description": "Respuesta del modelo sobre la ventana. Misma longitud que window.time."
+          },
+          "pid_tunings": {
+            "items": {
+              "$ref": "#/components/schemas/PIDTuning"
+            },
+            "type": "array",
+            "title": "Pid Tunings"
+          },
+          "tau": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tau",
+            "description": "Solo en fopdt"
+          },
+          "tau1": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tau1",
+            "description": "Solo en sopdt: constante dominante"
+          },
+          "tau2": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tau2",
+            "description": "Solo en sopdt: constante rápida"
+          }
+        },
+        "type": "object",
+        "required": [
+          "model_type",
+          "gain",
+          "dead_time",
+          "fit_quality",
+          "tf_string",
+          "numerator",
+          "denominator",
+          "simulated",
+          "pid_tunings"
+        ],
+        "title": "ModelResult",
+        "description": "Un modelo candidato con su ajuste y sus sintonías.",
+        "example": {
+          "dead_time": 2.11,
+          "denominator": [
+            9.9974,
+            1.0
+          ],
+          "fit_quality": 0.9991,
+          "gain": 2.4891,
+          "model_type": "fopdt",
+          "numerator": [
+            2.4891
+          ],
+          "pid_tunings": [
+            {
+              "description": "IMC / Lambda — Robusto, recomendado para procesos lentos",
+              "kd": 0.0,
+              "ki": 0.1338,
+              "kp": 1.3374,
+              "lambda": 2.4994,
+              "method": "IMC",
+              "td": 0.0,
+              "ti": 9.9974
+            }
+          ],
+          "simulated": [
+            8.0,
+            8.0,
+            8.31,
+            9.02
+          ],
+          "tau": 9.9974,
+          "tf_string": "2.4891 * exp(-2.1100s) / (9.9974s + 1)"
+        }
+      },
+      "OpcUaDiscoverItem": {
+        "properties": {
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "host": {
+            "type": "string",
+            "title": "Host"
+          },
+          "port": {
+            "type": "integer",
+            "title": "Port"
+          },
+          "tcp_ok": {
+            "type": "boolean",
+            "title": "Tcp Ok",
+            "description": "True si el puerto TCP respondió al sondeo"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "De dónde salió el candidato"
+          }
+        },
+        "type": "object",
+        "required": [
+          "url",
+          "host",
+          "port",
+          "tcp_ok",
+          "source"
+        ],
+        "title": "OpcUaDiscoverItem",
+        "description": "Un candidato de servidor OPC UA encontrado en la red.",
+        "example": {
+          "host": "192.168.1.1",
+          "port": 4840,
+          "source": "candidate",
+          "tcp_ok": true,
+          "url": "opc.tcp://192.168.1.1:4840"
+        }
+      },
+      "OpcUaDiscoverProgramsRequest": {
+        "properties": {
+          "user": {
+            "type": "string",
+            "title": "User",
+            "description": "Usuario OPC UA del ctrlX"
+          },
+          "password": {
+            "type": "string",
+            "title": "Password",
+            "description": "Contraseña OPC UA"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url",
+            "description": "Endpoint OPC UA, formato opc.tcp://host:puerto"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user",
+          "password",
+          "url"
+        ],
+        "title": "OpcUaDiscoverProgramsRequest",
+        "example": {
+          "password": "********",
+          "url": "opc.tcp://192.168.1.1:4840",
+          "user": "boschrexroth"
+        }
+      },
+      "OpcUaDiscoverVariablesRequest": {
+        "properties": {
+          "user": {
+            "type": "string",
+            "title": "User",
+            "description": "Usuario OPC UA del ctrlX"
+          },
+          "password": {
+            "type": "string",
+            "title": "Password",
+            "description": "Contraseña OPC UA"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url",
+            "description": "Endpoint OPC UA, formato opc.tcp://host:puerto"
+          },
+          "program_name": {
+            "type": "string",
+            "title": "Program Name",
+            "description": "Programa PLC devuelto por /discover-programs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user",
+          "password",
+          "url",
+          "program_name"
+        ],
+        "title": "OpcUaDiscoverVariablesRequest",
+        "example": {
+          "password": "********",
+          "program_name": "PLC_PRG",
+          "url": "opc.tcp://192.168.1.1:4840",
+          "user": "boschrexroth"
+        }
+      },
+      "OpcUaLoginRequest": {
+        "properties": {
+          "user": {
+            "type": "string",
+            "title": "User",
+            "description": "Usuario OPC UA del ctrlX"
+          },
+          "password": {
+            "type": "string",
+            "title": "Password",
+            "description": "Contraseña OPC UA"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url",
+            "description": "Endpoint OPC UA, formato opc.tcp://host:puerto"
+          },
+          "program_name": {
+            "type": "string",
+            "title": "Program Name",
+            "description": "Programa PLC a monitorear"
+          },
+          "mapping": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SignalMapping"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Mapeo elegido en la vista. Si se omite se usan los alias por defecto."
+          }
+        },
+        "type": "object",
+        "required": [
+          "user",
+          "password",
+          "url",
+          "program_name"
+        ],
+        "title": "OpcUaLoginRequest",
+        "example": {
+          "mapping": {
+            "actuator": "Valvula_Salida",
+            "sensor": "Temp_Horno",
+            "setpoint": "Consigna",
+            "time": "Tiempo_Proceso"
+          },
+          "password": "********",
+          "program_name": "PLC_PRG",
+          "url": "opc.tcp://192.168.1.1:4840",
+          "user": "boschrexroth"
+        }
+      },
+      "OpcUaMappingRequest": {
+        "properties": {
+          "mapping": {
+            "$ref": "#/components/schemas/SignalMapping",
+            "description": "Nuevo mapeo rol -> variable"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mapping"
+        ],
+        "title": "OpcUaMappingRequest"
+      },
+      "PIDTuning": {
+        "properties": {
+          "method": {
+            "type": "string",
+            "title": "Method",
+            "description": "IMC | Ziegler-Nichols | Cohen-Coon | SIMC | ..."
+          },
+          "kp": {
+            "type": "number",
+            "title": "Kp",
+            "description": "Ganancia proporcional"
+          },
+          "ki": {
+            "type": "number",
+            "title": "Ki",
+            "description": "Ganancia integral = Kp/Ti"
+          },
+          "kd": {
+            "type": "number",
+            "title": "Kd",
+            "description": "Ganancia derivativa = Kp*Td"
+          },
+          "ti": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ti",
+            "description": "Tiempo integral, en segundos"
+          },
+          "td": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Td",
+            "description": "Tiempo derivativo, en segundos"
+          },
+          "lambda": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lambda",
+            "description": "Constante de tiempo de lazo cerrado deseada (solo IMC y SIMC)"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "description": "Texto para mostrar en la tabla de la UI",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "method",
+          "kp",
+          "ki",
+          "kd"
+        ],
+        "title": "PIDTuning",
+        "description": "Una sintonía PID.\n\nSe entregan las dos formas:\n  - estándar (la del bloque PID de ctrlX):  Kp, Ti, Td\n  - paralela:                               Kp, Ki, Kd\n\ncon Ki = Kp/Ti y Kd = Kp*Td.",
+        "example": {
+          "description": "SIMC (Skogestad) — Excelente rechazo de perturbaciones",
+          "kd": 0.0,
+          "ki": 0.3122,
+          "kp": 2.4981,
+          "lambda": 2.0,
+          "method": "SIMC",
+          "td": 0.0,
+          "ti": 8.0
+        }
+      },
+      "PlcVariable": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Browse name en el PLC"
+          },
+          "node_id": {
+            "type": "string",
+            "title": "Node Id",
+            "description": "NodeId OPC UA"
+          },
+          "data_type": {
+            "type": "string",
+            "title": "Data Type",
+            "description": "Tipo OPC UA: Float, Double, Int16... o UNKNOWN"
+          },
+          "value": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value",
+            "description": "Valor en el momento de la lectura"
+          },
+          "numeric": {
+            "type": "boolean",
+            "title": "Numeric",
+            "description": "True si sirve como señal continua para identificar"
+          },
+          "readable": {
+            "type": "boolean",
+            "title": "Readable",
+            "description": "False si la lectura falló"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error",
+            "description": "Motivo del fallo de lectura, si lo hubo"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "node_id",
+          "data_type",
+          "numeric",
+          "readable"
+        ],
+        "title": "PlcVariable",
+        "description": "Una variable del programa PLC.",
+        "example": {
+          "data_type": "Float",
+          "name": "rSensor",
+          "node_id": "ns=2;s=plc/app/Application/sym/PLC_PRG/rSensor",
+          "numeric": true,
+          "readable": true,
+          "value": 7.21
+        }
+      },
+      "SignalMapping": {
+        "properties": {
+          "time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time",
+            "description": "Variable con el tiempo del proceso, en segundos"
+          },
+          "actuator": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actuator",
+            "description": "Variable de la salida del controlador (MV)"
+          },
+          "sensor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sensor",
+            "description": "Variable de la medición del proceso (PV)"
+          },
+          "setpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Setpoint",
+            "description": "Variable del setpoint (opcional)"
+          },
+          "signal_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signal Type",
+            "description": "Variable que indica la escala. Si vale 1 el backend convierte de 4-20 mA a %."
+          }
+        },
+        "type": "object",
+        "title": "SignalMapping",
+        "description": "Qué variable del PLC cumple cada rol.\n\nTodos los campos son opcionales: el rol que se deje en `null` se resuelve\nen el backend con los alias por defecto (rActuator, rSensor, rTimeSec...).",
+        "example": {
+          "actuator": "rActuator",
+          "sensor": "rSensor",
+          "setpoint": "rSetPoint",
+          "signal_type": "uiSignalType",
+          "time": "rTimeSec"
+        }
+      },
+      "StatusResponse": {
+        "properties": {
+          "authenticated": {
+            "type": "boolean",
+            "title": "Authenticated",
+            "description": "Hay credenciales cargadas"
+          },
+          "connected": {
+            "type": "boolean",
+            "title": "Connected",
+            "description": "El hilo de lectura está vivo"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "user": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User"
+          },
+          "buffer_size": {
+            "type": "integer",
+            "title": "Buffer Size",
+            "description": "Muestras en el buffer circular"
+          },
+          "has_latest": {
+            "type": "boolean",
+            "title": "Has Latest"
+          },
+          "has_identification": {
+            "type": "boolean",
+            "title": "Has Identification"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "last_login_ts": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Login Ts",
+            "description": "Epoch UNIX del último login"
+          },
+          "program_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Program Name"
+          },
+          "mapping": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mapping"
+          }
+        },
+        "type": "object",
+        "required": [
+          "authenticated",
+          "connected",
+          "url",
+          "user",
+          "buffer_size",
+          "has_latest",
+          "has_identification",
+          "last_error",
+          "program_name",
+          "mapping"
+        ],
+        "title": "StatusResponse",
+        "example": {
+          "authenticated": true,
+          "buffer_size": 1250,
+          "connected": true,
+          "has_identification": true,
+          "has_latest": true,
+          "last_login_ts": 1754212800.42,
+          "mapping": {
+            "actuator": "rActuator",
+            "sensor": "rSensor",
+            "setpoint": "rSetPoint",
+            "signal_type": "uiSignalType",
+            "time": "rTimeSec"
+          },
+          "program_name": "PLC_PRG",
+          "url": "opc.tcp://192.168.1.1:4840",
+          "user": "boschrexroth"
+        }
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "OPC UA",
+      "description": "Conexión con el PLC, descubrimiento de variables y mapeo de señales."
+    },
+    {
+      "name": "Identificación",
+      "description": "Resultados del motor de identificación. Se generan **automáticamente** cuando se detecta un escalón; no hay endpoint para dispararla a mano."
+    },
+    {
+      "name": "Sistema",
+      "description": "Chequeos de estado."
+    },
+    {
+      "name": "Vistas",
+      "description": "Páginas HTML de la aplicación web."
+    }
+  ]
+}

@@ -10,6 +10,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 
+from api.routes.health import router as health_router
+from api.routes.identification import router as identification_router
 from api.routes.opcua import router as opcua_router
 from application.services.identification_pipeline_service import IdentificationPipelineService
 from application.services.identification_service import IdentificationService
@@ -26,7 +28,63 @@ STATIC_DIR = WEB_DIR / "static"
 TEMPLATES_DIR = WEB_DIR / "templates"
 
 APP_PREFIX = os.getenv("APP_PREFIX", "/api-sysid")
-app = FastAPI()
+
+API_DESCRIPTION = """
+Identificación de sistemas y sintonía PID sobre un ctrlX Core X3.
+
+Lee señales de un programa PLC por OPC UA, detecta escalones en el actuador
+y ajusta modelos FOPDT, SOPDT e integrador, entregando las constantes PID.
+
+## Flujo de conexión
+
+Los endpoints están pensados para usarse en este orden:
+
+1. `GET  /api/opcua/discover` — buscar dispositivos en la red
+2. `POST /api/opcua/discover-programs` — listar programas del PLC
+3. `POST /api/opcua/discover-variables` — listar **todas** las variables del programa
+4. `POST /api/opcua/login` — abrir sesión con el mapeo elegido
+5. `WS   /ws` — recibir muestras y resultados en tiempo real
+
+## Unidades
+
+Cada muestra viaja en dos escalas:
+
+- `actuator`, `sensor`, `setpoint`: el valor **crudo** tal como está en el PLC
+- `actuator_pct`, `sensor_pct`, `setpoint_pct`: convertido a **0-100 %**
+
+La conversión de 4-20 mA a porcentaje solo se aplica si la variable mapeada
+como `signal_type` vale `1`. En cualquier otro caso los campos `_pct` repiten
+el valor crudo.
+
+## WebSocket
+
+Swagger no documenta WebSockets. El protocolo completo de `/ws` está en el
+`README.md` del repositorio.
+"""
+
+TAGS_METADATA = [
+    {
+        "name": "OPC UA",
+        "description": "Conexión con el PLC, descubrimiento de variables y mapeo de señales.",
+    },
+    {
+        "name": "Identificación",
+        "description": (
+            "Resultados del motor de identificación. Se generan **automáticamente** "
+            "cuando se detecta un escalón; no hay endpoint para dispararla a mano."
+        ),
+    },
+    {"name": "Sistema", "description": "Chequeos de estado."},
+    {"name": "Vistas", "description": "Páginas HTML de la aplicación web."},
+]
+
+app = FastAPI(
+    title="ctrlX System Identification API",
+    description=API_DESCRIPTION,
+    version="1.1.0",
+    openapi_tags=TAGS_METADATA,
+    contact={"name": "Equipo ctrlX SysID"},
+)
 
 ALLOWED_ORIGINS = [
     "http://localhost:5501",
@@ -160,6 +218,8 @@ app.state.last_identification_result = None
 app.state.last_step_index = None
 
 app.include_router(opcua_router)
+app.include_router(identification_router)
+app.include_router(health_router)
 
 @app.on_event("startup")
 async def startup_event() -> None:
@@ -172,7 +232,13 @@ async def shutdown_event() -> None:
     opcua_session_service.stop()
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get(
+    "/",
+    response_class=HTMLResponse,
+    tags=["Vistas"],
+    summary="Pantalla de login",
+    description="Formulario de conexión: host, credenciales, programa y mapeo de señales.",
+)
 async def home(request: Request):
     return templates.TemplateResponse(
         request=request,
@@ -180,7 +246,14 @@ async def home(request: Request):
         context={"app_prefix": APP_PREFIX},
     )
 
-@app.get("/app", response_class=HTMLResponse)
+
+@app.get(
+    "/app",
+    response_class=HTMLResponse,
+    tags=["Vistas"],
+    summary="Aplicación principal",
+    description="Gráficos en tiempo real, resultados de identificación, sintonía PID y Bode.",
+)
 async def app_view(request: Request):
     return templates.TemplateResponse(
         request=request,
@@ -189,20 +262,7 @@ async def app_view(request: Request):
     )
 
 
-@app.get("/health")
-async def health() -> dict:
-    latest = realtime_service.get_latest_sample()
-
-    return {
-        "status": "ok",
-        "buffer_size": realtime_service.get_buffer_size(),
-        "has_latest": latest is not None,
-        "has_identification": last_identification_result is not None,
-        "opcua_authenticated": opcua_session_service.is_authenticated,
-        "opcua_url": opcua_session_service.current_url,
-        "opcua_user": opcua_session_service.current_user,
-        "use_percent": get_current_use_percent(),
-    }
+# /health vive en api/routes/health.py
 
 
 @app.websocket("/ws")

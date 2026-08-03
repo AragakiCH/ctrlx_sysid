@@ -21,12 +21,20 @@ class IdentificationPipelineService:
             "dead_time": result.model.dead_time,
             "fit_quality": result.fit_quality,
             "tf_string": result.model.tf_string,
+            "numerator": result.model.numerator,
+            "denominator": result.model.denominator,
+            # La curva simulada alimenta el gráfico medido-vs-modelo.
+            "simulated": result.simulated,
             "pid_tunings": [
                 {
                     "method": pid.method,
                     "kp": pid.kp,
                     "ki": pid.ki,
                     "kd": pid.kd,
+                    "ti": pid.ti,
+                    "td": pid.td,
+                    "lambda": pid.lambda_c,
+                    "description": pid.description,
                 }
                 for pid in result.pid_tunings
             ],
@@ -74,5 +82,15 @@ class IdentificationPipelineService:
         return {
             "step_index": step_index,
             "winner": best.model.model_type,
+            # Ventana usada para identificar. La UI la necesita para graficar
+            # el medido contra el simulado: el buffer completo tiene otra
+            # longitud y no cuadraría con `simulated`.
+            "window": {
+                "time": window.time,
+                "actuator": window.actuator,
+                "sensor": window.sensor,
+                "setpoint": window.setpoint,
+                "count": len(window.time),
+            },
             "models": [self.serialize_result(r) for r in results],
         }
