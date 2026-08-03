@@ -1,287 +1,491 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="es">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ctrlX CORE X3 — Identificación de Sistemas</title>
-    <link rel="stylesheet" href="/static/css/app.css" />
-    <script src="/static/js/libreriaChart.js"></script>
-  </head>
-  <body>
-    <!-- ==================== HEADER ==================== -->
-    <header>
-      <div class="logo">
-        <span class="logo-wordmark">ctrlX CORE</span>
-        <span class="logo-badge">X3</span>
-        <span class="logo-context">// System Identification</span>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ctrlX CORE X3 — Sintonizador PID</title>
+
+  <!-- Iconos Font Awesome — servido localmente -->
+  <link rel="stylesheet" href="/static/css/all.min.css" />
+
+  <!-- Chart.js — servido localmente (sin dependencia de internet) -->
+  <script src="/static/js/libreriaChart.js"></script>
+
+  <!-- Hoja de estilos principal -->
+  <link rel="stylesheet" href="/static/css/app.css" />
+</head>
+<body>
+
+  <!-- ==================== TOP BAR ==================== -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <span class="topbar-logo">ctrlX CORE X3</span>
+      <div class="topbar-sep"></div>
+      <span class="topbar-title">Identificación de Planta y Sintonía PID</span>
+    </div>
+
+    <div class="topbar-right">
+      <div class="api-status">
+        <div class="api-dot" id="apiDot"></div>
+        <span id="apiLabel">Sin conexión</span>
       </div>
-      <div class="header-status">
-        <div class="status-pill" id="statusPill">
-          <div class="status-dot" id="statusDot"></div>
-          <span id="statusText">OFFLINE</span>
-        </div>
-        <div class="status-pill" id="clockDisplay"></div>
-      </div>
-    </header>
-    <!-- ==================== MAIN LAYOUT ==================== -->
-    <div class="main-layout">
-      <!-- ===== SIDEBAR ===== -->
-      <aside class="sidebar">
-        <div class="section-header">Señales de Entrada</div>
-        <div class="input-group">
-          <label>Tipo de Señal <span class="label-unit">PLC I/O</span></label>
-          <select id="signalType" onchange="updateSignalLabels()">
-            <option value="ma">4-20 mA (Corriente)</option>
-            <option value="percent">0-100 % (Porcentaje)</option>
-          </select>
-        </div>
-        <div class="input-group">
-          <label
-            >Tiempo
-            <span class="label-unit" id="timeUnit">segundos</span></label
-          >
-          <textarea
-            id="dataTime"
-            placeholder="0, 1, 2, 3, 4, 5 ..."
-            rows="3"
-          ></textarea>
-        </div>
-        <div class="input-group">
-          <label
-            >Actuador — Salida PLC
-            <span class="label-unit" id="actUnit">mA</span></label
-          >
-          <textarea
-            id="dataActuator"
-            placeholder="4.0, 4.0, 12.0, 12.0 ..."
-            rows="3"
-          ></textarea>
-        </div>
-        <div class="input-group">
-          <label
-            >Sensor — Entrada PLC
-            <span class="label-unit" id="senUnit">mA</span></label
-          >
-          <textarea
-            id="dataSensor"
-            placeholder="4.0, 4.1, 5.2, 8.3 ..."
-            rows="3"
-          ></textarea>
-        </div>
-        <div class="input-group">
-          <label
-            >Set Point
-            <span class="label-unit" id="spUnit">mA (opcional)</span></label
-          >
-          <textarea
-            id="dataSetpoint"
-            placeholder="12.0, 12.0, 12.0 ..."
-            rows="2"
-          ></textarea>
+      <button
+        class="btn btn-secondary"
+        onclick="exportResults()"
+        id="btnExport"
+        style="display:none"
+      >
+        <i class="fa-solid fa-download"></i> Exportar
+      </button>
+    </div>
+  </header>
+
+  <!-- ==================== STEPS NAV ==================== -->
+  <nav class="steps">
+    <button class="step-btn active" onclick="goStep(1)" id="sb1">
+      <div class="step-num">1</div>Variables
+    </button>
+    <button class="step-btn" onclick="goStep(2)" id="sb2">
+      <div class="step-num">2</div>Ensayo
+    </button>
+    <button class="step-btn" onclick="goStep(3)" id="sb3">
+      <div class="step-num">3</div>Gráficas
+    </button>
+    <button class="step-btn" onclick="goStep(4)" id="sb4">
+      <div class="step-num">4</div>Identificación
+    </button>
+    <button class="step-btn" onclick="goStep(5)" id="sb5">
+      <div class="step-num">5</div>Sintonía PID
+    </button>
+  </nav>
+
+  <!-- ==================== STATUS BAR ==================== -->
+  <div class="status-bar" id="statusBar">
+    <i class="fa-solid fa-circle-info"></i>
+    <span id="statusMsg"></span>
+  </div>
+
+  <!-- ==================== MAIN ==================== -->
+  <main class="main">
+
+    <!-- ═══════════ PASO 1: VARIABLES ═══════════ -->
+    <section class="panel active" id="p1">
+
+      <div class="card">
+        <div class="card-title">
+          <i class="fa-solid fa-right-left"></i>Direccionamiento de variables
         </div>
 
-        <div class="btn-group" style="margin-top: 10px">
-          <button class="btn btn-primary" onclick="startSystem()">
-            ▶ Identificar Sistema
+        <!-- Actuador -->
+        <label class="var-heading">Entrada (u) — Actuador</label>
+        <div class="var-grid">
+          <div>
+            <label>Variable en el PLC</label>
+            <input type="text" id="varAct" value="AO_Actuador_mA" placeholder="ej. AO_Actuador_mA" />
+          </div>
+          <div>
+            <label>Tipo de señal</label>
+            <select id="typeAct" onchange="updateBadge('act')">
+              <option value="ma">4-20 mA</option>
+              <option value="pct">0-100 %</option>
+              <option value="v">0-10 V</option>
+            </select>
+          </div>
+          <div class="badge-slot">
+            <span class="badge badge-ma" id="badge-act">4-20 mA</span>
+          </div>
+        </div>
+
+        <hr />
+
+        <!-- Sensor -->
+        <label class="var-heading">Salida (y) — Sensor / Variable de proceso</label>
+        <div class="var-grid">
+          <div>
+            <label>Variable en el PLC</label>
+            <input type="text" id="varSen" value="AI_Sensor_mA" placeholder="ej. AI_Sensor_mA" />
+          </div>
+          <div>
+            <label>Tipo de señal</label>
+            <select id="typeSen" onchange="updateBadge('sen')">
+              <option value="ma">4-20 mA</option>
+              <option value="pct">0-100 %</option>
+              <option value="v">0-10 V</option>
+            </select>
+          </div>
+          <div class="badge-slot">
+            <span class="badge badge-ma" id="badge-sen">4-20 mA</span>
+          </div>
+        </div>
+
+        <hr />
+
+        <!-- Set Point -->
+        <label class="var-heading">Set Point (SP) — opcional</label>
+        <div class="var-grid">
+          <div>
+            <label>Variable en el PLC</label>
+            <input type="text" id="varSP" value="SP_mA" placeholder="ej. SP_mA" />
+          </div>
+          <div>
+            <label>Tipo de señal</label>
+            <select id="typeSP" onchange="updateBadge('sp')">
+              <option value="ma">4-20 mA</option>
+              <option value="pct">0-100 %</option>
+              <option value="v">0-10 V</option>
+            </select>
+          </div>
+          <div class="badge-slot">
+            <span class="badge badge-ma" id="badge-sp">4-20 mA</span>
+          </div>
+        </div>
+
+        <hr class="mt-10" />
+
+        <div class="cols2 mt-12">
+          <div>
+            <label>Tiempo de muestreo (s)</label>
+            <input type="number" id="sampleTime" value="0.1" min="0.01" max="10" step="0.01" />
+          </div>
+          <div class="note-inline">
+            <span class="text-muted">Debe coincidir con el ciclo de tarea del ctrlX</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Datos manuales -->
+      <div class="card">
+        <div class="card-title">
+          <i class="fa-solid fa-file-import"></i>Ingreso manual de datos (opcional)
+        </div>
+        <p class="hint">
+          Pegue datos CSV capturados del PLC. Si ingresa datos aquí, se usarán en lugar del ensayo simulado.
+        </p>
+        <div class="cols3">
+          <div>
+            <label>Tiempo (s)</label>
+            <textarea id="manualTime" placeholder="0, 0.1, 0.2, 0.3 ..."></textarea>
+          </div>
+          <div>
+            <label>Actuador</label>
+            <textarea id="manualAct" placeholder="4.0, 4.0, 12.0, 12.0 ..."></textarea>
+          </div>
+          <div>
+            <label>Sensor</label>
+            <textarea id="manualSen" placeholder="4.0, 4.1, 5.2, 8.3 ..."></textarea>
+          </div>
+        </div>
+        <div class="mt-10 gap-8 flex-row">
+          <button class="btn btn-secondary" onclick="loadSample('fopdt')">
+            <i class="fa-solid fa-wand-magic-sparkles"></i> Demo FOPDT
+          </button>
+          <button class="btn btn-secondary" onclick="loadSample('sopdt')">
+            <i class="fa-solid fa-wand-magic-sparkles"></i> Demo SOPDT
+          </button>
+          <button class="btn btn-secondary" onclick="loadSample('integrating')">
+            <i class="fa-solid fa-wand-magic-sparkles"></i> Demo Integrante
           </button>
         </div>
-        <!-- <div class="input-group"> <label>Orden de Identificación</label> <select id="orderSelect"> <option value="auto">Automático (Mejor ajuste)</option> <option value="0">Integrante + Dead Time</option> <option value="1">1er Orden + Dead Time (FOPDT)</option> <option value="2">2do Orden + Dead Time (SOPDT)</option> </select> </div> -->
-        <!-- <div class="btn-group"> <button class="btn btn-primary" onclick="runIdentification()"> ▶ Identificar Sistema </button> <button class="btn btn-secondary" onclick="clearAll()"> ✕ Limpiar </button> </div> -->
-        <!-- <div class="section-header">Datos de Ejemplo</div> <div class="sample-buttons"> <button class="btn-sample" onclick="loadSample('fopdt')"> FOPDT<br />1er Orden </button> <button class="btn-sample" onclick="loadSample('sopdt')"> SOPDT<br />2do Orden </button> <button class="btn-sample" onclick="loadSample('integrating')"> INT<br />Integrante </button> </div> -->
-        <!-- <div class="input-group" style="margin-top: auto"> <label>Nivel de Ruido <span class="label-unit">σ</span></label> <input type="number" id="noiseLevel" value="0.5" step="0.1" min="0" max="5" /> </div> -->
-      </aside>
-      <!-- ===== CONTENT ===== -->
-      <main class="content" style="position: relative">
-        <div class="loading-overlay" id="loadingOverlay">
-          <div class="spinner"></div>
-          <div class="loading-text">Procesando...</div>
-        </div>
-        <!-- Tabs -->
-        <nav class="tabs">
-          <div class="tab active" onclick="switchTab('data')">Señales</div>
-          <div class="tab" onclick="switchTab('identification')">
-            Identificación
-          </div>
-          <div class="tab" onclick="switchTab('pid')">Sintonía PID</div>
-          <div class="tab" onclick="switchTab('bode')">
-            Análisis Frecuencial
-          </div>
-        </nav>
-        <!-- TAB: SEÑALES -->
-        <div class="tab-content active" id="tab-data">
-          <div class="chart-area">
-            <div class="chart-card">
-              <div class="chart-title">
-                <span>Señal Actuador — Salida Corriente PLC</span>
-                <div class="chart-label">
-                  <div class="legend-item">
-                    <div class="legend-dot" style="background: #0078c8"></div>
-                    <span>Actuador</span>
-                  </div>
-                  <div class="legend-item">
-                    <div class="legend-dot" style="background: #c47a00"></div>
-                    <span>Set Point</span>
-                  </div>
-                </div>
-              </div>
+      </div>
 
-              <!-- 🔥 PANEL DE VALORES -->
-              <div class="live-values">
-                <span>Act: <b id="valAct">--</b></span>
-                <span>SP: <b id="valSP">--</b></span>
-              </div>
+      <div class="btn-row">
+        <button class="btn btn-primary" onclick="goStep(2)">
+          Siguiente <i class="fa-solid fa-arrow-right"></i>
+        </button>
+      </div>
+    </section>
 
-              <div class="chart-wrapper">
-                <canvas id="chartActuator"></canvas>
-              </div>
-            </div>
-            <div class="chart-card">
-              <div class="chart-title">
-                <span>Señal Sensor — Entrada Corriente PLC</span>
-                <div class="chart-label">
-                  <div class="legend-item">
-                    <div class="legend-dot" style="background: #1a9e5c"></div>
-                    <span>Sensor / PV</span>
-                  </div>
-                </div>
-              </div>
-              <div class="chart-wrapper">
-                <canvas id="chartSensor"></canvas>
-              </div>
-              <!-- 🔥 PANEL SENSOR -->
-              <div class="live-values">
-                <span>PV: <b id="valSensor">--</b></span>
-              </div>
-            </div>
-          </div>
-        </div>
-        <!-- TAB: IDENTIFICACIÓN -->
-        <div class="tab-content" id="tab-identification">
-          <div id="metricsBar" class="metrics-bar" style="display: none">
-            <div class="metric-cell">
-              <div class="metric-label">Mejor Modelo</div>
-              <div class="metric-value" id="metBestModel">—</div>
-            </div>
-            <div class="metric-cell">
-              <div class="metric-label">Ajuste R²</div>
-              <div class="metric-value" id="metFitQuality">—</div>
-            </div>
-            <div class="metric-cell">
-              <div class="metric-label">Ganancia K</div>
-              <div class="metric-value" id="metK">—</div>
-            </div>
-            <div class="metric-cell">
-              <div class="metric-label">Dead Time L</div>
-              <div class="metric-value" id="metL">—</div>
-            </div>
-          </div>
-          <div id="noResultsMsg" style="display: flex">
-            <div class="mini-loader">
-              <div class="spinner"></div>
-            </div>
-            <span>Cargando Datos</span>
-          </div>
-          <div
-            class="chart-card"
-            id="idChartCard"
-            style="display: none; margin: 12px; flex-shrink: 0; height: 240px"
-          >
-            <div class="chart-title">
-              <span>Respuesta Medida vs Modelo Identificado</span>
-              <div class="chart-label">
-                <div class="legend-item">
-                  <div class="legend-dot" style="background: #1a9e5c"></div>
-                  <span>Medido</span>
-                </div>
-                <div class="legend-item">
-                  <div class="legend-dot" style="background: #e03050"></div>
-                  <span>Modelo 1er</span>
-                </div>
-                <div class="legend-item">
-                  <div class="legend-dot" style="background: #7048c8"></div>
-                  <span>Modelo 2do</span>
-                </div>
-              </div>
-            </div>
-            <div class="chart-wrapper">
-              <canvas id="chartComparison"></canvas>
-            </div>
-          </div>
-          <div
-            class="results-grid scrollable"
-            id="resultsGrid"
-            style="display: none"
-          ></div>
+    <!-- ═══════════ PASO 2: ENSAYO ═══════════ -->
+    <section class="panel" id="p2">
+      <div class="card">
+        <div class="card-title">
+          <i class="fa-solid fa-arrow-trend-up"></i>Condiciones de ensayo — caja negra
         </div>
 
-        <!-- TAB: SINTONÍA PID -->
-        <div class="tab-content" id="tab-pid">
-          <!-- 🔥 LOADER -->
-          <div id="pidLoader" class="mini-loader-container">
-            <div class="mini-loader">
-              <div class="spinner"></div>
+        <label class="mb-6">Vista previa del escalón</label>
+        <div class="preview-wrap mb-14">
+          <canvas id="stepPreview"></canvas>
+        </div>
+
+        <div class="cols3 mb-14">
+          <div>
+            <label>Valor inicial</label>
+            <input type="number" id="stepFrom" value="8.0" step="0.5" oninput="drawStepPreview()" />
+            <span class="hint-inline" id="stepFromPct">= 25 %</span>
+          </div>
+          <div>
+            <label>Valor final</label>
+            <input type="number" id="stepTo" value="12.0" step="0.5" oninput="drawStepPreview()" />
+            <span class="hint-inline" id="stepToPct">= 50 %</span>
+          </div>
+          <div>
+            <label>Duración total (s)</label>
+            <input type="number" id="duration" value="120" step="10" min="10" />
+          </div>
+        </div>
+
+        <div class="cols2">
+          <div>
+            <label>Retardo antes del escalón (s)</label>
+            <input type="number" id="stepDelay" value="10" step="1" min="0" />
+          </div>
+          <div>
+            <label>Orden de identificación</label>
+            <select id="orderSel">
+              <option value="auto">Automático (mejor ajuste)</option>
+              <option value="1">1er orden + Dead Time (FOPDT)</option>
+              <option value="2">2do orden + Dead Time (SOPDT)</option>
+              <option value="0">Integrante + Dead Time</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn-secondary" onclick="goStep(1)">
+          <i class="fa-solid fa-arrow-left"></i> Atrás
+        </button>
+        <button class="btn btn-primary" onclick="goStep(3)">
+          Siguiente <i class="fa-solid fa-arrow-right"></i>
+        </button>
+      </div>
+    </section>
+
+    <!-- ═══════════ PASO 3: GRÁFICAS ═══════════ -->
+    <section class="panel" id="p3">
+
+      <!-- Live values -->
+      <div class="live-row">
+        <div class="live-cell">
+          <span class="live-lbl">Actuador (u)</span>
+          <span class="live-val" id="valAct">--</span>
+        </div>
+        <div class="live-cell">
+          <span class="live-lbl">Set Point</span>
+          <span class="live-val" id="valSP">--</span>
+        </div>
+        <div class="live-cell">
+          <span class="live-lbl">Sensor (PV)</span>
+          <span class="live-val" id="valSensor">--</span>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-hdr">
+          Señal de entrada — actuador (u)
+          <div class="legend">
+            <div class="leg"><div class="leg-sq" style="background:#2a78d6"></div>Actuador</div>
+          </div>
+        </div>
+        <div class="chart-box h-160">
+          <canvas id="cAct" role="img" aria-label="Señal del actuador en el tiempo"></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-hdr">
+          Señal de salida — sensor / PV (y)
+          <div class="legend">
+            <div class="leg"><div class="leg-sq" style="background:#1baf7a"></div>Sensor / PV</div>
+          </div>
+        </div>
+        <div class="chart-box h-160">
+          <canvas id="cSen" role="img" aria-label="Señal del sensor en el tiempo"></canvas>
+        </div>
+      </div>
+
+      <div class="prog-row">
+        <div class="prog-wrap"><div class="prog-bar" id="progBar"></div></div>
+        <span class="prog-lbl" id="progLabel">—</span>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn-secondary" onclick="goStep(2)">
+          <i class="fa-solid fa-arrow-left"></i> Atrás
+        </button>
+        <button class="btn btn-danger" id="btnStop" onclick="stopCapture()" style="display:none">
+          <i class="fa-solid fa-stop"></i> Paro
+        </button>
+        <button class="btn btn-primary" id="btnStart" onclick="startCapture()">
+          <i class="fa-solid fa-play"></i> Inicio
+        </button>
+        <button class="btn btn-primary" id="btnIdent" onclick="runIdentification()" style="display:none">
+          <i class="fa-solid fa-microchip"></i> Identificar
+        </button>
+        <button class="btn btn-primary" id="btnToIdent" onclick="goStep(4)" style="display:none">
+          Ver resultados <i class="fa-solid fa-arrow-right"></i>
+        </button>
+      </div>
+    </section>
+
+    <!-- ═══════════ PASO 4: IDENTIFICACIÓN ═══════════ -->
+    <section class="panel" id="p4">
+
+      <!-- Sub-tabs: Modelo / Bode -->
+      <div class="tab-bar">
+        <div class="tab-item active" onclick="switchIdentTab('model')" id="itab-model">
+          Modelo identificado
+        </div>
+        <div class="tab-item" onclick="switchIdentTab('bode')" id="itab-bode">
+          Diagrama de Bode
+        </div>
+      </div>
+
+      <!-- Tab: Modelo -->
+      <div id="ident-model">
+        <div class="metrics" id="metricsRow" style="display:none">
+          <div class="metric">
+            <div class="metric-lbl">Mejor modelo</div>
+            <div class="metric-val metric-val-sm" id="mModel">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-lbl">Ajuste R²</div>
+            <div class="metric-val" id="mFit">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-lbl">Ganancia K</div>
+            <div class="metric-val" id="mK">—</div>
+          </div>
+          <div class="metric">
+            <div class="metric-lbl">Dead Time L</div>
+            <div class="metric-val" id="mL">—</div>
+          </div>
+        </div>
+
+        <div id="bestSection" style="display:none" class="col-gap-12 mt-12">
+          <div class="tf-wrap">
+            <div class="tf-box">
+              <div class="tf-lbl">Función de transferencia G(s)</div>
+              <div class="tf-eq">
+                <div class="tf-num" id="tfNum">K</div>
+                <div class="tf-bar"></div>
+                <div class="tf-den" id="tfDen">τs + 1</div>
+              </div>
+              <div class="tf-delay" id="tfDelay"></div>
             </div>
-            <span>Calculando PID...</span>
+            <div class="chart-card chart-card-slim">
+              <div class="chart-hdr">
+                Medido vs modelo
+                <div class="legend">
+                  <div class="leg"><div class="leg-sq" style="background:#1baf7a"></div>Medido</div>
+                  <div class="leg"><div class="leg-sq" style="background:#eb6834"></div>Modelo</div>
+                </div>
+              </div>
+              <div class="chart-box h-140">
+                <canvas id="cCmp" role="img" aria-label="Comparación medido vs modelo"></canvas>
+              </div>
+            </div>
           </div>
 
-          <!-- 🔥 CONTENIDO REAL -->
-          <div
-            class="pid-section scrollable"
-            id="pidContent"
-            style="display: none"
-          >
-            <div class="pid-title">Parámetros PID — Métodos de Sintonía</div>
-            <div id="pidTablesContainer"></div>
-            <div class="info-box" id="pidInfoBox"></div>
+          <div>
+            <div class="section-lbl">Modelos alternativos</div>
+            <div class="alts" id="altCards"></div>
+          </div>
+        </div>
 
-            <div class="chart-card" style="margin-top: 12px">
-              <div class="chart-title">
-                <span>Comparación Parámetros PID</span>
-              </div>
-              <div class="chart-wrapper">
-                <canvas id="chartPID"></canvas>
-              </div>
+        <div class="empty" id="emptyIdent">
+          <i class="fa-solid fa-clock"></i>
+          <span>Ejecute el ensayo en el paso 3 y presione Identificar</span>
+        </div>
+      </div>
+
+      <!-- Tab: Bode -->
+      <div id="ident-bode" style="display:none" class="col-gap-12">
+        <div class="empty" id="emptyBode">
+          <i class="fa-solid fa-chart-line"></i>
+          <span>Realice la identificación primero</span>
+        </div>
+        <div id="bodeCharts" style="display:none" class="col-gap-12">
+          <div class="chart-card">
+            <div class="chart-hdr">Magnitud (dB)</div>
+            <div class="chart-box h-180">
+              <canvas id="cBodeMag" role="img" aria-label="Diagrama de Bode - Magnitud"></canvas>
+            </div>
+          </div>
+          <div class="chart-card">
+            <div class="chart-hdr">Fase (°)</div>
+            <div class="chart-box h-180">
+              <canvas id="cBodePhase" role="img" aria-label="Diagrama de Bode - Fase"></canvas>
             </div>
           </div>
         </div>
-        <!-- TAB: ANÁLISIS FRECUENCIAL -->
-        <div class="tab-content" id="tab-bode">
-          <div id="noBodeMsg" class="mini-loader-container">
-            <div class="mini-loader">
-              <div class="spinner"></div>
-            </div>
-            <span>Generando Bode...</span>
-          </div>
-          <div
-            class="chart-area chart-single"
-            id="bodeContent"
-            style="display: none"
-          >
-            <div class="chart-card">
-              <div class="chart-title">
-                <span>Diagrama de Bode — Magnitud y Fase</span>
-              </div>
-              <div class="chart-wrapper"><canvas id="chartBode"></canvas></div>
-            </div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn-secondary" onclick="goStep(3)">
+          <i class="fa-solid fa-arrow-left"></i> Atrás
+        </button>
+        <button class="btn btn-primary" id="btnToPID" onclick="goStep(5)" style="display:none">
+          Sintonía PID <i class="fa-solid fa-arrow-right"></i>
+        </button>
+      </div>
+    </section>
+
+    <!-- ═══════════ PASO 5: SINTONÍA PID ═══════════ -->
+    <section class="panel" id="p5">
+      <div class="empty" id="emptyPID">
+        <i class="fa-solid fa-sliders"></i>
+        <span>Complete la identificación primero</span>
+      </div>
+
+      <div id="pidContent" style="display:none" class="col-gap-12">
+        <div class="pid-model-tabs" id="pidModelTabs"></div>
+
+        <div class="fmt-row">
+          <span class="fmt-lbl">Formato de parámetros</span>
+          <div class="fmt-toggle">
+            <button class="fmt-btn active" id="fmt1" onclick="setFormat('standard')">Kp, Ki, Kd</button>
+            <button class="fmt-btn" id="fmt2" onclick="setFormat('parallel')">Kp, Ti, Td</button>
           </div>
         </div>
-      </main>
-    </div>
-    <div class="notification" id="notification"></div>
-    <script>
-      const nav = performance.getEntriesByType("navigation")[0];
-      if (nav && nav.type === "reload") {
-        sessionStorage.clear();
-        localStorage.removeItem("plc_session");
-        window.location.href = "/";
-      }
-    </script>
-    <!-- Scripts: orden importante state → ui → charts → identification → pid → api -->
-    <script src="/static/js/state.js"></script>
-    <script src="/static/js/ui.js"></script>
-    <script src="/static/js/charts.js"></script>
-    <script src="/static/js/identification.js"></script>
-    <script src="/static/js/pid.js"></script>
-    <script src="/static/js/api_plc.js"></script>
-  </body>
+
+        <div class="tbl-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Método</th>
+                <th id="col1">Kp</th>
+                <th id="col2">Ki</th>
+                <th id="col3">Kd</th>
+                <th>Descripción</th>
+              </tr>
+            </thead>
+            <tbody id="pidBody"></tbody>
+          </table>
+        </div>
+
+        <div class="info-box" id="pidInfoBox"></div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn-secondary" onclick="goStep(4)">
+          <i class="fa-solid fa-arrow-left"></i> Atrás
+        </button>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Reset de sesión al recargar (comportamiento heredado) -->
+  <script>
+    const nav = performance.getEntriesByType('navigation')[0];
+    if (nav && nav.type === 'reload') {
+      sessionStorage.clear();
+      localStorage.removeItem('plc_session');
+      window.location.href = '/';
+    }
+  </script>
+
+  <!-- ==================== SCRIPTS ==================== -->
+  <!-- Orden importante: state → ui → charts → bode → identification → pid → export → websocket → main -->
+  <script src="/static/js/state.js"></script>
+  <script src="/static/js/ui.js"></script>
+  <script src="/static/js/charts.js"></script>
+  <script src="/static/js/bode.js"></script>
+  <script src="/static/js/identification.js"></script>
+  <script src="/static/js/pid.js"></script>
+  <script src="/static/js/export.js"></script>
+  <script src="/static/js/websocket.js"></script>
+  <script src="/static/js/main.js"></script>
+</body>
 </html>

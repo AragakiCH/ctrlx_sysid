@@ -1,802 +1,715 @@
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600;700&display=swap');
+/* =========================================================
+   ctrlX CORE X3 — Sintonizador PID
+   Hoja de estilos principal
+   =========================================================
+   Índice
+   1. Reset & tokens (variables CSS)
+   2. Base / body
+   3. Top bar
+   4. Steps (wizard nav)
+   5. Status bar
+   6. Layout principal / panels
+   7. Cards
+   8. Formularios / inputs
+   9. Badges
+   10. Botones
+   11. Preview del escalón
+   12. Live values (paso 3)
+   13. Barra de progreso
+   14. Charts
+   15. Métricas (paso 4)
+   16. Función de transferencia
+   17. Alt cards (modelos alternativos)
+   18. Sub-tabs (dentro del paso 4)
+   19. PID (paso 5)
+   20. Tabla
+   21. Info box
+   22. Spinner
+   23. Empty state
+   24. Utilidades / helpers
+   25. Responsive
+========================================================= */
 
-/* ==================== DESIGN TOKENS ==================== */
+
+/* ==================== 1. RESET & TOKENS ==================== */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
 :root {
-  /* Superficies — espejo del ctrlX OS */
-  --bg-sidebar:       #2b2d33;
-  --bg-sidebar-hover: #383a42;
-  --bg-app:           #e8eaec;
-  --bg-content:       #f2f4f6;
-  --bg-card:          #ffffff;
-  --bg-raised:        #edf1f5;
-  --bg-input:         rgba(255,255,255,0.06);
+  /* Superficies */
+  --bg:              #f8f8f7;
+  --surface:         #ffffff;
+  --surface2:        #f4f3f0;
 
   /* Bordes */
-  --border:        #d0d8e0;
-  --border-mid:    #b8c4ce;
-  --border-focus:  #0078c8;
-
-  /* Accent — azul ctrlX */
-  --accent:        #0078c8;
-  --accent-hover:  #0066aa;
-  --accent-light:  #e5f2fc;
-  --accent-mid:    #4da6e0;
-
-  /* Semánticos */
-  --green:         #1a9e5c;
-  --green-bg:      #e8f7ef;
-  --green-border:  #a3d9bc;
-  --amber:         #c47a00;
-  --amber-bg:      #fff8e5;
-  --amber-border:  #f0c96a;
-  --red:           #c8293a;
+  --border:          rgba(11, 11, 11, 0.10);
+  --border-strong:   rgba(11, 11, 11, 0.18);
 
   /* Texto */
-  --text-primary:   #1a2332;
-  --text-secondary: #4a5868;
-  --text-muted:     #7a8fa0;
-  --text-dim:       #a8b8c4;
-  --text-on-dark:   #e8edf2;
+  --text:            #0b0b0b;
+  --text2:           #52514e;
+  --text3:           #898781;
 
-  /* Misc */
-  --radius-sm:   2px;
-  --radius-md:   4px;
-  --radius-lg:   6px;
-  --shadow-card: 0 1px 4px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.04);
-  --shadow-raise:0 4px 16px rgba(0,0,0,0.12);
-  --transition:  0.18s ease;
+  /* Acento */
+  --accent:          #185FA5;
+  --accent-hover:    #0c447c;
+  --accent-bg:       #e6f1fb;
+  --accent-text:     #185FA5;
+
+  /* Semánticos */
+  --success:         #3B6D11;
+  --success-bg:      #eaf3de;
+  --warning:         #854F0B;
+  --warning-bg:      #faeeda;
+  --danger:          #A32D2D;
+  --danger-bg:       #fcebeb;
+
+  /* Radios / tipografía */
+  --radius:          8px;
+  --font:            system-ui, -apple-system, sans-serif;
+  --mono:            ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
 }
 
-/* ==================== RESET ==================== */
-*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
-/* ==================== BODY ==================== */
+/* ==================== 2. BASE / BODY ==================== */
 body {
-  font-family: 'IBM Plex Sans', sans-serif;
-  background: var(--bg-app);
-  color: var(--text-primary);
+  font-family: var(--font);
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg);
   min-height: 100vh;
-  overflow-x: hidden;
-  font-size: 13px;
-  line-height: 1.5;
 }
 
-/* ==================== HEADER ==================== */
-header {
-  background: var(--bg-sidebar);
-  padding: 0 20px 0 0;
+
+/* ==================== 3. TOP BAR ==================== */
+.topbar {
+  background: var(--surface);
+  border-bottom: 0.5px solid var(--border);
+  padding: 0 24px;
+  height: 52px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 52px;
-  z-index: 20;
-  position: relative;
-  border-bottom: 3px solid var(--accent);
+  position: sticky;
+  top: 0;
+  z-index: 100;
 }
 
-.logo {
+.topbar-left  { display: flex; align-items: center; gap: 12px; }
+.topbar-right { display: flex; align-items: center; gap: 8px; }
+
+.topbar-logo  { font-size: 13px; font-weight: 600; color: var(--accent); }
+.topbar-sep   { width: 0.5px; height: 18px; background: var(--border-strong); }
+.topbar-title { font-size: 13px; color: var(--text2); }
+
+.api-status {
   display: flex;
   align-items: center;
-  height: 100%;
-}
-
-.logo-wordmark {
-  font-family: 'IBM Plex Sans Condensed', sans-serif;
-  font-weight: 700;
-  font-size: 13px;
-  letter-spacing: 0.5px;
-  color: var(--text-on-dark);
-  padding: 0 18px;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  border-right: 1px solid rgba(255,255,255,0.1);
-}
-
-.logo-badge {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 10px;
-  font-weight: 500;
-  background: var(--accent);
-  color: #fff;
-  padding: 3px 8px;
-  margin-left: 14px;
-  border-radius: var(--radius-sm);
-  letter-spacing: 1px;
-}
-
-.logo-context {
-  font-family: 'IBM Plex Sans', sans-serif;
+  gap: 5px;
   font-size: 11px;
-  color: rgba(255,255,255,0.35);
-  margin-left: 10px;
-  font-weight: 300;
-  letter-spacing: 0.2px;
+  color: var(--text3);
 }
 
-.header-status {
+.api-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text3);
+  transition: background 0.15s;
+}
+.api-dot.ok    { background: var(--success); }
+.api-dot.error { background: var(--danger);  }
+
+
+/* ==================== 4. STEPS (WIZARD NAV) ==================== */
+.steps {
+  background: var(--surface);
+  border-bottom: 0.5px solid var(--border);
   display: flex;
-  gap: 8px;
-  align-items: center;
+  padding: 0 24px;
+  overflow-x: auto;
 }
 
-.status-pill {
-  font-family: 'IBM Plex Mono', monospace;
+.step-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text3);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+  font-family: var(--font);
+}
+
+.step-btn.active         { color: var(--accent); border-bottom-color: var(--accent); }
+.step-btn.active .step-num { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+.step-btn.done         { color: var(--text2); }
+.step-btn.done .step-num { background: var(--success); color: #fff; border-color: var(--success); }
+
+.step-num {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--surface2);
+  border: 0.5px solid var(--border-strong);
   font-size: 10px;
-  padding: 4px 10px;
-  border: 1px solid rgba(255,255,255,0.14);
-  border-radius: var(--radius-sm);
-  color: rgba(255,255,255,0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+
+
+/* ==================== 5. STATUS BAR ==================== */
+.status-bar {
+  padding: 7px 24px;
+  font-size: 12px;
+  display: none;
+  align-items: center;
+  gap: 8px;
+}
+.status-bar.visible { display: flex; }
+.status-bar.ok      { background: var(--success-bg); color: var(--success); border-bottom: 0.5px solid #c0dd97; }
+.status-bar.running { background: var(--warning-bg); color: var(--warning); border-bottom: 0.5px solid #fac775; }
+.status-bar.error   { background: var(--danger-bg);  color: var(--danger);  border-bottom: 0.5px solid #f7c1c1; }
+
+
+/* ==================== 6. LAYOUT PRINCIPAL / PANELS ==================== */
+.main {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.panel {
+  display: none;
+  flex-direction: column;
+  gap: 16px;
+}
+.panel.active { display: flex; }
+
+
+/* ==================== 7. CARDS ==================== */
+.card {
+  background: var(--surface);
+  border: 0.5px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 20px;
+}
+
+.card-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 12px;
   display: flex;
   align-items: center;
   gap: 6px;
-  letter-spacing: 0.4px;
 }
 
-.status-dot.offline {
-  background: var(--red);
-  animation: none;
-  box-shadow: none;
+
+/* ==================== 8. FORMULARIOS / INPUTS ==================== */
+label {
+  font-size: 12px;
+  color: var(--text2);
+  display: block;
+  margin-bottom: 4px;
 }
 
-.status-dot.online {
-  background: #2ecc71;
-  animation: pulse 2.5s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  0%,100% { opacity:1; box-shadow: 0 0 0 2px rgba(46,204,113,0.3); }
-  50%      { opacity:0.7; box-shadow: 0 0 0 4px rgba(46,204,113,0.1); }
-}
-
-#clockDisplay {
-  color: rgba(255,255,255,0.65);
-  font-family: 'IBM Plex Mono', monospace;
+.var-heading {
   font-size: 11px;
+  font-weight: 600;
+  color: var(--text2);
+  margin: 10px 0 8px;
 }
 
-/* ==================== LAYOUT ==================== */
-.main-layout {
-  display: grid;
-  grid-template-columns: 260px 1fr;
-  height: calc(100vh - 52px);
-}
-
-/* ==================== SIDEBAR ==================== */
-.sidebar {
-  background: var(--bg-sidebar);
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-  overflow-x: hidden;
-  border-right: 1px solid rgba(0,0,0,0.25);
-}
-
-.sidebar::-webkit-scrollbar { width: 3px; }
-.sidebar::-webkit-scrollbar-track { background: transparent; }
-.sidebar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.14); border-radius: 2px; }
-
-.section-header {
-  padding: 14px 14px 6px;
-  font-family: 'IBM Plex Sans Condensed', sans-serif;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 1.5px;
-  text-transform: uppercase;
-  color: rgba(255,255,255,0.28);
-  border-bottom: 1px solid rgba(255,255,255,0.06);
-  margin-top: 4px;
-}
-
-.section-header:first-child { margin-top: 8px; }
-
-/* ==================== INPUTS ==================== */
-.input-group {
-  padding: 10px 14px;
-  border-bottom: 1px solid rgba(255,255,255,0.05);
-}
-
-.input-group label {
-  font-family: 'IBM Plex Sans', sans-serif;
-  font-size: 9.5px;
-  font-weight: 500;
-  color: rgba(255,255,255,0.42);
-  letter-spacing: 0.4px;
-  text-transform: uppercase;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 5px;
-}
-
-.label-unit {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 9px;
-  color: var(--accent-mid);
-  font-weight: 400;
-  text-transform: none;
-}
-
-input[type="number"],
-input[type="text"],
+input[type=text],
+input[type=number],
 select,
 textarea {
   width: 100%;
-  background: rgba(255,255,255,0.07);
-  border: 1px solid rgba(255,255,255,0.11);
-  color: var(--text-on-dark);
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 11px;
-  padding: 7px 9px;
-  border-radius: var(--radius-sm);
-  outline: none;
-  transition: border-color var(--transition), background var(--transition), box-shadow var(--transition);
-  -webkit-appearance: none;
+  font-size: 13px;
+  padding: 0 10px;
+  background: var(--surface);
+  border: 0.5px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--font);
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 
-input:focus, select:focus, textarea:focus {
-  border-color: var(--accent-mid);
-  background: rgba(255,255,255,0.10);
-  box-shadow: 0 0 0 2px rgba(0,120,200,0.22);
-}
-
-select option { background: #333540; color: var(--text-on-dark); }
+input[type=text],
+input[type=number],
+select { height: 34px; }
 
 textarea {
+  padding: 8px 10px;
   resize: vertical;
-  min-height: 70px;
+  min-height: 56px;
+  line-height: 1.5;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-bg);
+}
+
+.cols2    { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.cols3    { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+.var-grid { display: grid; grid-template-columns: 1fr 140px 100px; gap: 10px; align-items: end; margin-bottom: 12px; }
+
+.badge-slot { display: flex; align-items: flex-end; padding-bottom: 2px; }
+
+.hint {
+  font-size: 12px;
+  color: var(--text3);
+  margin-bottom: 12px;
+}
+.hint-inline {
   font-size: 10px;
-  line-height: 1.7;
+  color: var(--text3);
+  margin-top: 3px;
+  display: block;
 }
 
-/* ==================== BUTTONS ==================== */
-.btn {
-  width: 100%;
-  padding: 9px 14px;
-  font-family: 'IBM Plex Sans Condensed', sans-serif;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.8px;
-  text-transform: uppercase;
-  border: none;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: all var(--transition);
-}
-
-.btn-primary {
-  background: var(--accent);
-  color: #fff;
-  box-shadow: 0 1px 3px rgba(0,120,200,0.35);
-}
-.btn-primary:hover {
-  background: var(--accent-hover);
-  box-shadow: 0 2px 8px rgba(0,120,200,0.45);
-  transform: translateY(-1px);
-}
-.btn-primary:active { transform: translateY(0); }
-
-.btn-secondary {
-  background: transparent;
-  border: 1px solid rgba(255,255,255,0.17);
-  color: rgba(255,255,255,0.58);
-}
-.btn-secondary:hover {
-  border-color: rgba(255,255,255,0.34);
-  color: rgba(255,255,255,0.88);
-  background: rgba(255,255,255,0.05);
-}
-
-.btn-group {
-  padding: 12px 14px;
+.note-inline {
   display: flex;
-  flex-direction: column;
-  gap: 7px;
-  border-bottom: 1px solid rgba(255,255,255,0.06);
+  align-items: flex-end;
+  padding-bottom: 6px;
 }
+.text-muted { font-size: 11px; color: var(--text3); }
 
-.sample-buttons {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 5px;
-  padding: 10px 14px;
-  border-bottom: 1px solid rgba(255,255,255,0.06);
-}
 
-.btn-sample {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 9px;
-  font-weight: 500;
-  padding: 7px 4px;
-  background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(255,255,255,0.09);
-  color: rgba(255,255,255,0.48);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: all var(--transition);
-  text-align: center;
-  line-height: 1.4;
-}
-.btn-sample:hover {
-  border-color: var(--accent-mid);
-  color: #fff;
-  background: rgba(0,120,200,0.18);
-}
-
-/* ==================== CONTENT ==================== */
-.content {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  background: var(--bg-content);
-}
-
-/* ==================== TABS ==================== */
-.tabs {
-  display: flex;
-  background: var(--bg-card);
-  border-bottom: 1px solid var(--border);
-  padding: 0 20px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-  z-index: 5;
-  position: relative;
-}
-
-.tab {
-  font-family: 'IBM Plex Sans', sans-serif;
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.2px;
-  padding: 14px 18px;
-  cursor: pointer;
-  color: var(--text-muted);
-  border-bottom: 2px solid transparent;
-  transition: all var(--transition);
-  white-space: nowrap;
-  margin-bottom: -1px;
-}
-.tab:hover { color: var(--text-secondary); }
-.tab.active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
-  font-weight: 600;
-}
-
-.tab-content { display: none; flex: 1; overflow: hidden; }
-.tab-content.active { display: flex; flex-direction: column; }
-
-/* ==================== CHARTS ==================== */
-.chart-area {
-  flex: 1;
-  display: grid;
-  grid-template-rows: 1fr 1fr;
-  padding: 14px;
-  gap: 10px;
-  overflow: hidden;
-}
-
-.chart-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  box-shadow: var(--shadow-card);
-  transition: box-shadow var(--transition);
-}
-.chart-card:hover { box-shadow: var(--shadow-raise); }
-
-.chart-title {
-  font-family: 'IBM Plex Sans', sans-serif;
-  font-size: 9.5px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  padding: 9px 14px;
-  border-bottom: 1px solid var(--border);
-  display: flex;
+/* ==================== 9. BADGES ==================== */
+.badge {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  letter-spacing: 0.4px;
-  text-transform: uppercase;
-  background: var(--bg-raised);
-}
-
-.live-values {
-  display: flex;
-  gap: 16px;
-  padding: 4px 10px;
+  gap: 4px;
   font-size: 11px;
-  font-family: "IBM Plex Mono", monospace;
-  color: #7a8fa0;
+  font-weight: 500;
+  padding: 3px 10px;
+  border-radius: 20px;
+}
+.badge-ma  { background: var(--accent-bg);  color: var(--accent-text); }
+.badge-pct { background: var(--success-bg); color: var(--success); }
+.badge-v   { background: var(--warning-bg); color: var(--warning); }
+
+
+/* ==================== 10. BOTONES ==================== */
+.btn {
+  height: 34px;
+  padding: 0 16px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: var(--radius);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s;
+  font-family: var(--font);
+  border: none;
 }
 
-.live-values b {
-  color: #1a2332;
-  font-weight: 600;
-}
+.btn-primary          { background: var(--accent); color: #fff; }
+.btn-primary:hover    { background: var(--accent-hover); }
+.btn-primary:disabled { background: #b5d4f4; cursor: not-allowed; }
 
-.chart-label { display: flex; align-items: center; gap: 14px; }
-.legend-item {
-  display: flex; align-items: center; gap: 5px;
-  font-size: 10px;
-  color: var(--text-muted);
-  font-weight: 400;
-  text-transform: none;
-  letter-spacing: 0;
-}
-.legend-dot { width: 12px; height: 2px; border-radius: 1px; }
+.btn-secondary        { background: var(--surface); color: var(--text); border: 0.5px solid var(--border-strong); }
+.btn-secondary:hover  { background: var(--surface2); }
 
-.chart-wrapper { flex: 1; padding: 10px; position: relative; }
-.chart-single { grid-template-rows: 1fr; }
+.btn-danger           { background: var(--surface); color: var(--danger); border: 0.5px solid #f7c1c1; }
+.btn-danger:hover     { background: var(--danger-bg); }
 
-/* ==================== METRICS BAR ==================== */
-.metrics-bar {
+.btn-row {
   display: flex;
-  background: var(--bg-card);
-  border-bottom: 1px solid var(--border);
-  box-shadow: var(--shadow-card);
+  gap: 8px;
+  justify-content: flex-end;
+  padding-top: 4px;
 }
 
-.metric-cell {
-  flex: 1;
-  padding: 10px 16px;
-  border-right: 1px solid var(--border);
+
+/* ==================== 11. PREVIEW DEL ESCALÓN ==================== */
+.preview-wrap {
+  height: 100px;
+  border: 0.5px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface2);
+  overflow: hidden;
+}
+#stepPreview { width: 100%; height: 100%; }
+
+
+/* ==================== 12. LIVE VALUES (PASO 3) ==================== */
+.live-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.live-cell {
+  background: var(--surface);
+  border: 0.5px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
-.metric-cell:last-child { border-right: none; }
 
-.metric-label {
-  font-family: 'IBM Plex Sans', sans-serif;
-  font-size: 9px;
-  font-weight: 600;
-  color: var(--text-muted);
-  letter-spacing: 0.5px;
+.live-lbl {
+  font-size: 10px;
+  color: var(--text3);
   text-transform: uppercase;
+  letter-spacing: 0.3px;
+  font-weight: 500;
 }
-
-.metric-value {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 15px;
+.live-val {
+  font-size: 18px;
+  font-family: var(--mono);
   color: var(--accent);
   font-weight: 500;
 }
 
-/* ==================== RESULTS GRID ==================== */
-.results-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 12px;
-  padding: 14px;
-  overflow-y: auto;
-}
 
-.result-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  overflow: hidden;
-  transition: box-shadow var(--transition), border-color var(--transition);
-  box-shadow: var(--shadow-card);
-}
-.result-card:hover {
-  box-shadow: var(--shadow-raise);
-  border-color: var(--border-mid);
-}
-.result-card.best {
-  border-color: var(--accent);
-  border-top-width: 2px;
-}
-
-.result-header {
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
+/* ==================== 13. BARRA DE PROGRESO ==================== */
+.prog-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  background: var(--bg-raised);
+  gap: 10px;
+}
+.prog-wrap {
+  height: 4px;
+  background: var(--surface2);
+  border-radius: 2px;
+  overflow: hidden;
+  flex: 1;
+}
+.prog-bar {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  width: 0%;
+  transition: width 0.15s;
+}
+.prog-lbl {
+  font-size: 11px;
+  color: var(--text3);
+  white-space: nowrap;
 }
 
-.result-method {
-  font-family: 'IBM Plex Sans Condensed', sans-serif;
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--accent);
-  letter-spacing: 0.3px;
-  text-transform: uppercase;
-}
 
-.result-badge {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 9px;
-  padding: 2px 7px;
-  border-radius: var(--radius-sm);
-  border: 1px solid;
-  font-weight: 500;
+/* ==================== 14. CHARTS ==================== */
+.chart-card {
+  background: var(--surface);
+  border: 0.5px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 16px;
 }
-.badge-best    { color: var(--green);  border-color: var(--green-border);  background: var(--green-bg); }
-.badge-quality { color: var(--amber);  border-color: var(--amber-border); background: var(--amber-bg); }
+.chart-card-slim { padding: 10px; }
 
-/* ==================== TRANSFER FUNCTION ==================== */
-.tf-display {
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-content);
-}
-
-.tf-label {
-  font-family: 'IBM Plex Sans', sans-serif;
-  font-size: 9px;
-  font-weight: 600;
-  color: var(--text-muted);
+.chart-hdr {
+  font-size: 11px;
+  color: var(--text3);
   margin-bottom: 8px;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
-.tf-fraction {
+.chart-box { position: relative; }
+.h-140     { height: 140px; }
+.h-160     { height: 160px; }
+.h-180     { height: 180px; }
+
+.legend { display: flex; gap: 12px; }
+.leg    { display: flex; align-items: center; gap: 5px; font-size: 10px; color: var(--text3); }
+.leg-sq { width: 12px; height: 3px; border-radius: 1px; }
+
+
+/* ==================== 15. MÉTRICAS (PASO 4) ==================== */
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.metric {
+  background: var(--surface2);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+
+.metric-lbl {
+  font-size: 10px;
+  color: var(--text3);
+  margin-bottom: 3px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.metric-val    { font-size: 20px; font-weight: 500; color: var(--accent); font-family: var(--mono); }
+.metric-val-sm { font-size: 15px; }
+
+
+/* ==================== 16. FUNCIÓN DE TRANSFERENCIA ==================== */
+.tf-wrap {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.tf-box {
+  background: var(--accent-bg);
+  border: 0.5px solid #b5d4f4;
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  text-align: center;
+}
+
+.tf-lbl {
+  font-size: 10px;
+  color: var(--accent-text);
+  margin-bottom: 8px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.tf-eq {
   display: flex;
   flex-direction: column;
   align-items: center;
+  gap: 2px;
+  font-family: var(--mono);
+  font-size: 13px;
 }
-
-.tf-num, .tf-den {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 12px;
-  color: var(--text-primary);
-  padding: 2px 8px;
-}
-
-.tf-line {
-  width: 80%;
-  height: 1px;
-  background: var(--accent);
-  opacity: 0.45;
-  margin: 2px 0;
-}
+.tf-num { padding: 2px; color: var(--text); }
+.tf-den { padding: 2px; color: var(--text); }
+.tf-bar { height: 1px; width: 85%; background: var(--accent); margin: 3px 0; }
 
 .tf-delay {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 10px;
-  color: var(--amber);
+  font-size: 11px;
+  color: var(--warning);
   margin-top: 5px;
-  text-align: center;
-  font-weight: 500;
+  font-family: var(--mono);
 }
 
-/* ==================== PARAMS GRID ==================== */
-.params-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1px;
-  background: var(--border);
-}
 
-.param-cell { background: var(--bg-card); padding: 9px 12px; }
-
-.param-name {
-  font-family: 'IBM Plex Sans', sans-serif;
-  font-size: 9px;
+/* ==================== 17. ALT CARDS ==================== */
+.section-lbl {
+  font-size: 11px;
   font-weight: 600;
-  color: var(--text-muted);
+  color: var(--text3);
+  text-transform: uppercase;
   letter-spacing: 0.5px;
-  text-transform: uppercase;
+  margin-bottom: 8px;
 }
 
-.param-value {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 14px;
-  color: var(--accent);
-  font-weight: 500;
-  margin-top: 2px;
-}
-
-/* ==================== PID TABLE ==================== */
-.pid-section { padding: 14px; overflow-y: auto; }
-
-.pid-title {
-  font-family: 'IBM Plex Sans Condensed', sans-serif;
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin-bottom: 14px;
-  letter-spacing: 0.4px;
-  text-transform: uppercase;
-  display: flex;
-  align-items: center;
+.alts {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
   gap: 8px;
 }
 
-.pid-title::before {
-  content: '';
-  width: 3px; height: 14px;
-  background: var(--accent);
-  border-radius: 2px;
-  flex-shrink: 0;
+.alt-card {
+  background: var(--surface);
+  border: 0.5px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: all 0.15s;
 }
+.alt-card:hover,
+.alt-card.sel { border-color: var(--accent); background: var(--accent-bg); }
 
-.pid-table-wrapper {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+.alt-method { font-size: 12px; font-weight: 600; color: var(--accent); }
+.alt-r2     { font-size: 10px; color: var(--text3); margin: 2px 0; }
+.alt-tf     { font-size: 10px; font-family: var(--mono); color: var(--text2); line-height: 1.6; margin-top: 4px; }
+
+
+/* ==================== 18. SUB-TABS (PASO 4) ==================== */
+.tab-bar {
+  display: flex;
+  border-bottom: 0.5px solid var(--border);
+  margin-bottom: 12px;
+}
+.tab-item {
+  padding: 8px 16px;
+  font-size: 12px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  color: var(--text3);
+  transition: all 0.15s;
+}
+.tab-item.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+
+/* ==================== 19. PID (PASO 5) ==================== */
+.pid-model-tabs {
+  display: flex;
+  border-bottom: 0.5px solid var(--border);
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.pid-mtab {
+  padding: 7px 14px;
+  font-size: 12px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  color: var(--text3);
+  transition: all 0.15s;
+}
+.pid-mtab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.fmt-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.fmt-lbl { font-size: 12px; color: var(--text2); }
+
+.fmt-toggle {
+  display: flex;
+  border: 0.5px solid var(--border-strong);
+  border-radius: var(--radius);
   overflow: hidden;
-  margin-bottom: 14px;
-  box-shadow: var(--shadow-card);
+}
+.fmt-btn {
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text3);
+  font-family: var(--font);
+}
+.fmt-btn.active { background: var(--accent); color: #fff; }
+
+
+/* ==================== 20. TABLA ==================== */
+.tbl-wrap {
+  border: 0.5px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
 }
 
-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-
-thead { background: var(--bg-raised); }
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
 
 th {
-  padding: 9px 14px;
+  padding: 8px 12px;
   text-align: left;
-  font-family: 'IBM Plex Sans', sans-serif;
-  font-size: 9px;
-  font-weight: 700;
-  color: var(--text-muted);
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-  border-bottom: 1px solid var(--border);
-}
-
-td {
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--border);
-  color: var(--text-primary);
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 11px;
-}
-
-tr:last-child td { border-bottom: none; }
-tbody tr:hover { background: var(--accent-light); }
-
-.td-method {
-  color: var(--accent);
-  font-family: 'IBM Plex Sans Condensed', sans-serif;
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text3);
+  background: var(--surface2);
+  border-bottom: 0.5px solid var(--border);
   text-transform: uppercase;
   letter-spacing: 0.3px;
 }
-.td-value { color: var(--green); font-weight: 500; }
-.td-desc  { color: var(--text-muted); font-size: 10px; font-family: 'IBM Plex Sans', sans-serif; }
 
-/* ==================== INFO BOX ==================== */
+td {
+  padding: 8px 12px;
+  border-bottom: 0.5px solid var(--border);
+  color: var(--text);
+}
+
+tr:last-child td { border-bottom: none; }
+tr:hover td      { background: var(--surface2); }
+
+.td-method { color: var(--accent); font-weight: 600; }
+.td-val    { color: var(--success); font-family: var(--mono); }
+.td-desc   { color: var(--text3); font-size: 11px; }
+
+
+/* ==================== 21. INFO BOX ==================== */
 .info-box {
-  margin: 0 0 14px;
-  padding: 12px 14px;
-  background: var(--accent-light);
-  border: 1px solid rgba(0,120,200,0.18);
+  padding: 12px 16px;
+  background: var(--accent-bg);
   border-left: 3px solid var(--accent);
-  border-radius: var(--radius-md);
-  font-family: 'IBM Plex Sans', sans-serif;
-  font-size: 11px;
-  color: var(--text-secondary);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: 12px;
+  color: var(--text2);
   line-height: 1.7;
 }
 
-/* ==================== LOADING OVERLAY ==================== */
-.loading-overlay {
-  position: absolute;
-  inset: 0;
-  background: rgba(242,244,246,0.75);
-  backdrop-filter: blur(6px);
-  display: none;
-  align-items: center;
-  justify-content: center;
-  flex-direction: column;
-  gap: 16px;
-  z-index: 100;
-}
 
-.loading-overlay.visible {
-  display: flex;
-}
-
-/* Spinner PRO */
+/* ==================== 22. SPINNER ==================== */
 .spinner {
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  border: 3px solid rgba(0,0,0,0.1);
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border-strong);
   border-top-color: var(--accent);
-  animation: spin 0.8s linear infinite;
-  position: relative;
-}
-
-/* Glow effect */
-.spinner::after {
-  content: "";
-  position: absolute;
-  inset: -6px;
   border-radius: 50%;
-  border: 2px solid rgba(0,120,200,0.2);
+  animation: spin 0.6s linear infinite;
+  flex-shrink: 0;
 }
+@keyframes spin { to { transform: rotate(360deg); } }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
 
-.loading-text {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  letter-spacing: 0.5px;
-}
-
-.mini-loader-container {
+/* ==================== 23. EMPTY STATE ==================== */
+.empty {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
-  flex: 1;
-  color: var(--text-dim);
-  font-size: 12px;
-}
-
-.mini-loader {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-/* Spinner más fino */
-.mini-loader .spinner {
-  width: 32px;
-  height: 32px;
-  border: 2px solid rgba(0,0,0,0.1);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 0.7s linear infinite;
-}
-
-/* ==================== NOTIFICATION ==================== */
-.notification {
-  position: fixed;
-  top: 62px; right: 16px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--accent);
-  padding: 11px 16px;
-  font-family: 'IBM Plex Sans', sans-serif;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-primary);
-  border-radius: var(--radius-md);
-  z-index: 1000;
-  transform: translateX(120%);
-  transition: transform 0.25s cubic-bezier(.22,.68,0,1.2);
-  max-width: 320px;
-  box-shadow: var(--shadow-raise);
-}
-.notification.show    { transform: translateX(0); }
-.notification.error   { border-left-color: var(--red);   }
-.notification.success { border-left-color: var(--green); }
-
-/* ==================== EMPTY STATES ==================== */
-#noResultsMsg,
-#noPidMsg,
-#noBodeMsg {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  flex: 1;
   gap: 10px;
-  color: var(--text-dim);
-  font-family: 'IBM Plex Sans', sans-serif;
-  font-size: 12px;
-  font-weight: 500;
+  min-height: 180px;
+  color: var(--text3);
+}
+.empty i    { font-size: 36px; }
+.empty span { font-size: 12px; }
+
+
+/* ==================== 24. UTILIDADES / HELPERS ==================== */
+hr {
+  border: none;
+  border-top: 0.5px solid var(--border);
+  margin: 4px 0;
 }
 
-.no-results-icon { font-size: 40px; opacity: 0.22; }
+.mb-6      { margin-bottom: 6px; }
+.mb-14     { margin-bottom: 14px; }
+.mt-10     { margin-top: 10px; }
+.mt-12     { margin-top: 12px; }
+.gap-8     { gap: 8px; }
+.flex-row  { display: flex; }
+.col-gap-12 {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
 
-/* ==================== SCROLLABLE ==================== */
-.scrollable { overflow-y: auto; }
-.scrollable::-webkit-scrollbar { width: 4px; }
-.scrollable::-webkit-scrollbar-track { background: transparent; }
-.scrollable::-webkit-scrollbar-thumb { background: var(--border-mid); border-radius: 2px; }
+
+/* ==================== 25. RESPONSIVE ==================== */
+@media (max-width: 680px) {
+  .cols2,
+  .cols3,
+  .var-grid,
+  .tf-wrap,
+  .alts,
+  .metrics,
+  .live-row { grid-template-columns: 1fr; }
+
+  .main { padding: 14px; }
+}

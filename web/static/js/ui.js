@@ -1,72 +1,215 @@
-// ==================== CLOCK ====================
-function updateClock() {
-  const now = new Date();
-  document.getElementById('clockDisplay').textContent =
-    now.toLocaleTimeString('es-PE', { hour12: false });
-}
-updateClock();
-setInterval(updateClock, 1000);
+/* =========================================================
+   ui.js
+   Navegación entre pasos, badges, conversiones de unidad,
+   status bar y helpers de estado de conexión.
+   ========================================================= */
 
-// ==================== SIGNAL LABELS ====================
-function updateSignalLabels() {
-  const isMA = document.getElementById('signalType').value === 'ma';
-  document.getElementById('actUnit').textContent = isMA ? 'mA' : '%';
-  document.getElementById('senUnit').textContent = isMA ? 'mA' : '%';
-  document.getElementById('spUnit').textContent = isMA ? 'mA (opcional)' : '% (opcional)';
-  document.getElementById('dataActuator').placeholder = isMA ? '4.0, 4.0, 12.0, 12.0 ...' : '40, 40, 60, 60 ...';
-  document.getElementById('dataSensor').placeholder = isMA ? '4.0, 4.1, 5.2, 8.3 ...' : '40, 40.5, 45, 55 ...';
-}
 
-// ==================== TABS ====================
-function switchTab(tab) {
-  const tabNames = ['data', 'identification', 'pid', 'bode'];
-  document.querySelectorAll('.tab').forEach((t, i) => {
-    t.classList.toggle('active', tabNames[i] === tab);
-  });
-  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-  document.getElementById('tab-' + tab).classList.add('active');
-  setTimeout(() => Object.values(State.charts).forEach(c => c?.resize?.()), 50);
-}
+/* ==================== NAVEGACIÓN DE PASOS ==================== */
 
-// ==================== NOTIFICATION ====================
-function notify(msg, type = 'info') {
-  const n = document.getElementById('notification');
-  n.textContent = msg;
-  n.className = 'notification show ' + type;
-  setTimeout(() => n.className = 'notification', 3500);
-}
+/** Cambia al paso `n` (1..5) y actualiza indicadores del wizard. */
+function goStep(n) {
+  State.ui.step = n;
 
-// ==================== PARSE CSV ====================
-function parseCSV(str) {
-  if (!str.trim()) return [];
-  return str.split(/[\n,;]+/).map(v => parseFloat(v.trim())).filter(v => !isNaN(v));
-}
+  [1, 2, 3, 4, 5].forEach((i) => {
+    const panel = document.getElementById("p" + i);
+    const btn   = document.getElementById("sb" + i);
 
-// ==================== CLEAR ====================
-function clearAll() {
-  ['dataTime', 'dataActuator', 'dataSensor', 'dataSetpoint'].forEach(id => {
-    document.getElementById(id).value = '';
-  });
-
-  ['actuator', 'sensor', 'comparison', 'bode'].forEach(key => {
-    if (State.charts[key]) {
-      State.charts[key].destroy();
-      delete State.charts[key];
+    if (panel) panel.classList.toggle("active", i === n);
+    if (btn) {
+      btn.className = "step-btn" + (i === n ? " active" : i < n ? " done" : "");
     }
   });
 
-  document.getElementById('noResultsMsg').style.display = 'flex';
-  document.getElementById('idChartCard').style.display = 'none';
-  document.getElementById('resultsGrid').style.display = 'none';
-  document.getElementById('metricsBar').style.display = 'none';
-  document.getElementById('resultsGrid').innerHTML = '';
+  // Redraws diferidos (los canvas no miden bien cuando están display:none)
+  if (n === 2) setTimeout(drawStepPreview, 60);
+  if (n === 3 || n === 4) {
+    setTimeout(() => {
+      Object.values(State.charts).forEach((c) => c && c.resize && c.resize());
+    }, 60);
+  }
+}
 
-  document.getElementById('noPidMsg').style.display = 'flex';
-  document.getElementById('pidContent').style.display = 'none';
 
-  document.getElementById('noBodeMsg').style.display = 'flex';
-  document.getElementById('bodeContent').style.display = 'none';
+/* ==================== SUB-TABS DEL PASO 4 ==================== */
 
-  State.identificationResults = null;
-  notify('Panel limpiado', 'info');
+/** Alterna entre "model" y "bode" dentro del paso 4. */
+function switchIdentTab(tab) {
+  ["model", "bode"].forEach((t) => {
+    const el   = document.getElementById("ident-" + t);
+    const item = document.getElementById("itab-" + t);
+    if (el) el.style.display = t === tab ? (t === "bode" ? "flex" : "block") : "none";
+    if (item) item.classList.toggle("active", t === tab);
+  });
+
+  if (tab === "bode") {
+    setTimeout(() => {
+      [State.charts.cBodeMag, State.charts.cBodePhase].forEach(
+        (c) => c && c.resize && c.resize()
+      );
+    }, 60);
+  }
+}
+
+
+/* ==================== BADGES DE TIPO DE SEÑAL ==================== */
+
+const BADGE_CLS = { ma: "badge-ma",  pct: "badge-pct", v: "badge-v" };
+const BADGE_LBL = { ma: "4-20 mA",   pct: "0-100 %",   v: "0-10 V" };
+
+/** Refresca el badge de la variable indicada ("act" | "sen" | "sp"). */
+function updateBadge(which) {
+  const sel = document.getElementById("type" + which[0].toUpperCase() + which.slice(1));
+  const b   = document.getElementById("badge-" + which);
+  if (!sel || !b) return;
+
+  b.className   = "badge " + BADGE_CLS[sel.value];
+  b.textContent = BADGE_LBL[sel.value];
+}
+
+
+/* ==================== CONVERSIONES DE SEÑAL ==================== */
+
+/** Convierte un valor a porcentaje (0..100) según su tipo. */
+function toRange(v, t) {
+  if (t === "ma") return ((v - 4) / 16) * 100;
+  if (t === "v")  return (v / 10) * 100;
+  return v;
+}
+
+/** Convierte un porcentaje a la escala de su tipo. */
+function fromRange(p, t) {
+  if (t === "ma") return 4 + (p / 100) * 16;
+  if (t === "v")  return (p / 100) * 10;
+  return p;
+}
+
+/**
+ * Devuelve el tipo de señal usado como "referencia global" para la UI.
+ * Se toma el del actuador porque es la señal de entrada del proceso.
+ * "ma" | "pct" | "v"
+ */
+function getSignalType() {
+  return document.getElementById("typeAct")?.value || "ma";
+}
+
+
+/* ==================== FORMATO PID ==================== */
+
+/** Alterna la tabla PID entre formato standard (Kp,Ki,Kd) y parallel (Kp,Ti,Td). */
+function setFormat(f) {
+  State.ui.pidFormat = f;
+
+  document.getElementById("fmt1")?.classList.toggle("active", f === "standard");
+  document.getElementById("fmt2")?.classList.toggle("active", f === "parallel");
+
+  if (State.identification.models.length) {
+    renderPID(State.identification.models, State.identification.active);
+  }
+}
+
+
+/* ==================== STATUS BAR ==================== */
+
+/** Escribe un mensaje en la barra de estado. `cls`: "ok" | "running" | "error". */
+function setStatus(msg, cls) {
+  const bar  = document.getElementById("statusBar");
+  const span = document.getElementById("statusMsg");
+  if (!bar || !span) return;
+
+  span.textContent = msg;
+  bar.className    = "status-bar visible" + (cls ? " " + cls : "");
+}
+
+
+/* ==================== ESTADO DE CONEXIÓN (topbar) ==================== */
+
+/** Actualiza el punto y etiqueta de conexión en la topbar. */
+function setConnectionStatus(isOnline) {
+  const dot = document.getElementById("apiDot");
+  const lbl = document.getElementById("apiLabel");
+  if (!dot || !lbl) return;
+
+  if (isOnline) {
+    dot.className    = "api-dot ok";
+    lbl.textContent  = "Servidor conectado";
+  } else {
+    dot.className    = "api-dot error";
+    lbl.textContent  = "Sin conexión";
+  }
+}
+
+
+/* ==================== PARSE / FORMAT NUMÉRICO ==================== */
+
+/** Parsea un CSV (separado por coma, punto y coma, espacio o salto de línea) a array numérico. */
+function parseCSV(str) {
+  if (!str || !str.trim()) return [];
+  return str
+    .split(/[\n,;\s]+/)
+    .map((v) => parseFloat(v))
+    .filter((v) => !isNaN(v));
+}
+
+/** Vuelca un array numérico en un textarea con formato fijo. */
+function setTextareaValues(id, values, decimals = 4) {
+  const el = document.getElementById(id);
+  if (!el || !Array.isArray(values)) return;
+
+  el.value = values
+    .map((v) =>
+      typeof v === "number" && Number.isFinite(v) ? Number(v).toFixed(decimals) : ""
+    )
+    .join(", ");
+}
+
+/** Lee un textarea y devuelve el arreglo de números. */
+function parseTextareaNumbers(id) {
+  const el = document.getElementById(id);
+  if (!el) return [];
+  return el.value
+    .split(",")
+    .map((v) => Number(v.trim()))
+    .filter((v) => !Number.isNaN(v));
+}
+
+/** Devuelve el primer valor numérico finito de la lista. */
+function pickNumber(...values) {
+  for (const v of values) {
+    const n = Number(v);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+/** Formatea un número con `decimals` decimales, o "—" si no es válido. */
+function formatNumber(value, decimals = 4) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "—";
+  return Number(value).toFixed(decimals);
+}
+
+/** Convierte cualquier valor a Number o null. */
+function asNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Devuelve la etiqueta amigable del tipo de modelo. */
+function modelTypeLabel(type) {
+  switch ((type || "").toLowerCase()) {
+    case "fopdt":       return "FOPDT (1er orden)";
+    case "sopdt":       return "SOPDT (2do orden)";
+    case "integrating": return "Integrante";
+    default:            return type || "Modelo";
+  }
+}
+
+/** Escapa HTML mínimo para insertar texto en innerHTML. */
+function escapeHtml(text) {
+  return String(text ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
