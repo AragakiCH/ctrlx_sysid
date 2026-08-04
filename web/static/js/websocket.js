@@ -11,40 +11,195 @@
 
 /* ==================== ENTRY POINTS (botones del paso 3) ==================== */
 
-/** Botón "Inicio": inicia la sesión y abre el WebSocket. */
-function startCapture() {
-  if (State.ws.started) return;
-
+/**
+ * Se llama al cargar la app (desde main.js).
+ * Asegura que el WebSocket está abierto SIN arrancar un ensayo.
+ * Sirve para que los dropdowns del paso 1 se llenen con las variables
+ * que reporta el backend.
+ */
+function ensureWebSocket() {
+  if (State.ws.connection && State.ws.connection.readyState === WebSocket.OPEN) return;
   State.ws.started = true;
-
-  // UI feedback
-  document.getElementById("btnStart").style.display = "none";
-  document.getElementById("btnStop").style.display  = "";
-  document.getElementById("btnToIdent").style.display = "none";
-
-  setStatus("Conectando al PLC vía WebSocket...", "running");
-
-  resetSampleStore();
-  clearLiveValues();
   connectWebSocket();
 }
 
 
-/** Botón "Paro": cierra el WebSocket y detiene la captura. */
-function stopCapture() {
-  State.ws.started = false;
-  clearTimeout(State.ws.reconnectTimer);
+/**
+ * Botón "Inicio" (paso 3): arranca un nuevo ensayo.
+ *
+ * MODO ACTUAL (temporal, mientras validamos el flujo del ensayo):
+ * El chart se llena con el ESCALÓN IDEAL del paso 2 (no con los valores
+ * reales del PLC). Cada tick se calcula el valor teórico:
+ *   - t <  delay_s → step_from  (línea plana inicial)
+ *   - t >= delay_s → step_to    (línea plana final)
+ * y se anexa al sampleStore. Así el paso 3 muestra visualmente cómo
+ * quedaría la señal si el PLC ejecutara exactamente el escalón configurado.
+ *
+ * Cuando cableemos los datos reales del PLC, aquí cambiaremos el tick
+ * para que empuje `valueForRole(data, "actuator")` desde handleSample
+ * en vez de los valores sintéticos.
+ */
+function startCapture() {
+  const step = State.test?.step || {};
 
-  if (State.ws.connection) {
-    try { State.ws.connection.close(); } catch (_) {}
-    State.ws.connection = null;
+  const duration = Number(step.duration_s) || 120;
+  const delay    = Number(step.delay_s)    || 10;
+  const stepFrom = Number(step.step_from);
+  const stepTo   = Number(step.step_to);
+
+  if (!Number.isFinite(stepFrom) || !Number.isFinite(stepTo)) {
+    setStatus(
+      "Falta configurar el escalón (paso 2): valor inicial y final del actuador.",
+      "error"
+    );
+    return;
+  }
+
+  // Estado del ensayo — guardo también los parámetros del escalón
+  // para que el tick los tenga a mano sin volver a leer del DOM.
+  State.ensayo.running   = true;
+  State.ensayo.startedAt = Date.now();
+  State.ensayo.durationS = duration;
+  State.ensayo.delayS    = delay;
+  State.ensayo.stepFrom  = stepFrom;
+  State.ensayo.stepTo    = stepTo;
+
+  // Buffer limpio y timer arrancando
+  resetSampleStore();
+  setTextareaValues("manualTime", [], 2);
+  setTextareaValues("manualAct",  [], 3);
+  setTextareaValues("manualSen",  [], 3);
+
+  if (State.ensayo.timerId) clearInterval(State.ensayo.timerId);
+  State.ensayo.timerId = setInterval(tickEnsayo, 200);
+  tickEnsayo();
+
+  // UI
+  document.getElementById("btnStart").style.display   = "none";
+  document.getElementById("btnStop").style.display    = "";
+  document.getElementById("btnToIdent").style.display = "none";
+
+  const box = document.getElementById("ensayoTimerBox");
+  if (box) {
+    box.style.display = "";
+    box.className     = "ensayo-timer running";
+  }
+
+  plotCapture();
+  ensureWebSocket();  // WS sigue abierto para live values y dropdowns
+
+  setStatus(`Ensayo en curso — ${duration} s de captura`, "running");
+}
+
+
+/**
+ * Cada 200 ms mientras dure el ensayo:
+ *   1. Calcula el valor IDEAL del actuador según el reloj interno
+ *      (el chart del actuador es sintético, viene del paso 2).
+ *   2. Toma el ÚLTIMO valor REAL del sensor y del setpoint (cacheado
+ *      por handleSample en State.latestSample). Esto muestrea la señal
+ *      del PLC a 200 ms — sample-and-hold del valor más reciente.
+ *   3. Empuja actuador ideal + sensor real + setpoint real al buffer.
+ *   4. Actualiza el contador y redibuja el chart.
+ *   5. Si el tiempo alcanza durationS, dispara finishEnsayo.
+ */
+function tickEnsayo() {
+  if (!State.ensayo.running) return;
+
+  const elapsed = (Date.now() - State.ensayo.startedAt) / 1000;
+
+  // Valor IDEAL del actuador (sintético)
+  const ideal = elapsed < State.ensayo.delayS
+    ? State.ensayo.stepFrom
+    : State.ensayo.stepTo;
+
+  // Último valor REAL del sensor y setpoint (cacheado por handleSample)
+  const latest = State.latestSample || {};
+
+  const s = State.sampleStore;
+  s.time.push(elapsed);
+  s.actuator_ma.push(ideal);
+  s.actuator_pct.push(null);
+  s.sensor_ma.push(latest.sensorMa);         // ← REAL del PLC
+  s.sensor_pct.push(latest.sensorPct);       // ← REAL del PLC
+  s.setpoint_ma.push(latest.setpointMa);     // ← REAL del PLC
+  s.setpoint_pct.push(latest.setpointPct);   // ← REAL del PLC
+
+  // Contador
+  const counter = document.getElementById("ensayoCounter");
+  if (counter) counter.textContent = `${elapsed.toFixed(1)} s`;
+
+  plotCapture();
+  fillManualTextareas();
+
+  if (elapsed >= State.ensayo.durationS) finishEnsayo();
+}
+
+
+/**
+ * Rellena los textareas de "Ingreso manual de datos" (paso 1) con la data
+ * capturada del ensayo. Se actualiza en cada tick.
+ * NOTA: estos textareas son solo informativos — el backend NO los usa para
+ * identificar. La identificación siempre corre sobre el buffer interno del
+ * backend (los samples que llegaron por OPC UA).
+ */
+function fillManualTextareas() {
+  const s    = State.sampleStore;
+  const type = getSignalType();
+  const actuator = type === "pct" ? s.actuator_pct : s.actuator_ma;
+  const sensor   = type === "pct" ? s.sensor_pct   : s.sensor_ma;
+
+  setTextareaValues("manualTime", s.time,    2);
+  setTextareaValues("manualAct",  actuator,  3);
+  setTextareaValues("manualSen",  sensor,    3);
+}
+
+
+/**
+ * Se dispara automáticamente cuando el contador alcanza durationS.
+ * Congela el chart, esconde el contador y habilita "Identificar".
+ */
+function finishEnsayo() {
+  State.ensayo.running = false;
+  if (State.ensayo.timerId) {
+    clearInterval(State.ensayo.timerId);
+    State.ensayo.timerId = null;
+  }
+
+  // El contador desaparece al finalizar (pedido explícito).
+  const box = document.getElementById("ensayoTimerBox");
+  if (box) box.style.display = "none";
+
+  document.getElementById("btnStop").style.display  = "none";
+  document.getElementById("btnStart").style.display = "";
+  document.getElementById("btnIdent").style.display = "";
+
+  setStatus(
+    `Ensayo completado (${State.ensayo.durationS} s). Presiona "Identificar" para procesar.`,
+    "ok"
+  );
+}
+
+
+/**
+ * Botón "Paro" (paso 3): aborta el ensayo en curso.
+ * NO cierra el WebSocket — sigue abierto para los live values y
+ * los dropdowns del paso 1.
+ */
+function stopCapture() {
+  State.ensayo.running = false;
+  if (State.ensayo.timerId) {
+    clearInterval(State.ensayo.timerId);
+    State.ensayo.timerId = null;
   }
 
   document.getElementById("btnStop").style.display  = "none";
   document.getElementById("btnStart").style.display = "";
 
-  setStatus("Captura detenida por el usuario", "error");
-  setConnectionStatus(false);
+  const box = document.getElementById("ensayoTimerBox");
+  if (box) box.style.display = "none";
+
+  setStatus("Ensayo detenido por el usuario", "error");
 }
 
 
@@ -80,12 +235,13 @@ async function runIdentification(goToStep = true) {
     handleIdentificationResult(data);
 
     // El backend avisa si tuvo que ajustar con menos respuesta de la prevista.
+    // NO es un "running" — la identificación ya terminó. Es una ADVERTENCIA.
     if (data.truncated) {
       setStatus(
         `Identificado con ${data.window.count} muestras — la duración configurada ` +
           `pedía ${data.requested_post_samples} después del escalón. Revisa que la ` +
           `curva haya llegado al nuevo estable.`,
-        "running"
+        "warn"
       );
     }
 
@@ -208,42 +364,37 @@ function handleWsMessage(msg) {
 /* ==================== HANDLERS ==================== */
 
 /**
- * Cada muestra que llega la metemos en el sampleStore y refrescamos la vista.
- * El backend puede mandar la muestra "cruda" (`raw`) o ya derivada.
+ * Cada muestra que llega hace DOS cosas independientes:
+ *   1. Sincronizar mapping y poblar dropdowns del paso 1 (siempre).
+ *   2. Actualizar los live values del paso 3 (siempre).
+ *
+ * NO toca el sampleStore ni redibuja el chart. En esta versión el chart
+ * del paso 3 se alimenta 100% del escalón IDEAL configurado en paso 2,
+ * generado punto a punto por tickEnsayo(). Los datos reales del PLC solo
+ * se usan para los indicadores en vivo (valAct/valSP/valSensor).
+ *
+ * Cuando cableemos la señal real al chart, aquí se agregará el push al
+ * sampleStore condicionado a State.ensayo.running.
  */
 function handleSample(data) {
-  // El mapeo efectivo lo manda el backend en cada sample.
+  // 1. Mapping y dropdowns (siempre)
   if (data.mapping && typeof data.mapping === "object") {
     State.mapping = { ...State.mapping, ...data.mapping };
   }
-
-  // Los dropdowns de variables (paso 1) se llenan con las llaves de `raw`.
   populateVariableDropdowns(data);
 
-  const timeValue = valueForRole(data, "time");
-  if (timeValue === null) {
-    console.warn("Sample sin tiempo válido:", data);
-    return;
-  }
+  // 2. Cachear la última muestra completa — la usa tickEnsayo para
+  //    llenar el chart del sensor con el valor real más reciente.
+  const latest = State.latestSample;
+  latest.actuatorMa  = valueForRole(data, "actuator");
+  latest.sensorMa    = valueForRole(data, "sensor");
+  latest.setpointMa  = valueForRole(data, "setpoint");
+  latest.actuatorPct = pickNumber(data.actuator_pct);
+  latest.sensorPct   = pickNumber(data.sensor_pct);
+  latest.setpointPct = pickNumber(data.setpoint_pct);
 
-  const actuatorMa = valueForRole(data, "actuator");
-  const sensorMa   = valueForRole(data, "sensor");
-  const setpointMa = valueForRole(data, "setpoint");
-
-  const actuatorPct = pickNumber(data.actuator_pct);
-  const sensorPct   = pickNumber(data.sensor_pct);
-  const setpointPct = pickNumber(data.setpoint_pct);
-
-  const s = State.sampleStore;
-  pushSample(s.time,         timeValue);
-  pushSample(s.actuator_ma,  actuatorMa);
-  pushSample(s.sensor_ma,    sensorMa);
-  pushSample(s.setpoint_ma,  setpointMa);
-  pushSample(s.actuator_pct, actuatorPct);
-  pushSample(s.sensor_pct,   sensorPct);
-  pushSample(s.setpoint_pct, setpointPct);
-
-  refreshLiveViews();
+  // 3. Live values (siempre)
+  updateLiveValues(latest);
 }
 
 
@@ -269,37 +420,20 @@ function valueForRole(data, role) {
 }
 
 
-/** Añade un valor al buffer respetando `maxPoints`. */
-function pushSample(arr, value) {
-  arr.push(value);
-  if (arr.length > State.sampleStore.maxPoints) arr.shift();
-}
+/**
+ * Actualiza SOLO los indicadores en vivo del paso 3 (valAct, valSP, valSensor)
+ * usando la muestra recién llegada. No toca el sampleStore ni los charts.
+ * Se ejecuta en cada sample, haya o no ensayo en curso.
+ */
+function updateLiveValues(vals) {
+  const type     = getSignalType();
+  const actuator = type === "pct" ? vals.actuatorPct : vals.actuatorMa;
+  const sensor   = type === "pct" ? vals.sensorPct   : vals.sensorMa;
+  const setpoint = type === "pct" ? vals.setpointPct : vals.setpointMa;
 
-
-/** Refresca live values, textareas manuales y charts del paso 3. */
-function refreshLiveViews() {
-  const s    = State.sampleStore;
-  const type = getSignalType();
-
-  const actuator = type === "pct" ? s.actuator_pct : s.actuator_ma;
-  const sensor   = type === "pct" ? s.sensor_pct   : s.sensor_ma;
-  const setpoint = type === "pct" ? s.setpoint_pct : s.setpoint_ma;
-
-  // Live values (paso 3)
-  writeLive("valAct",    actuator[actuator.length - 1]);
-  writeLive("valSP",     setpoint[setpoint.length - 1]);
-  writeLive("valSensor", sensor[sensor.length - 1]);
-
-  // Textareas manuales (paso 1) — se van llenando en tiempo real
-  setTextareaValues("manualTime", s.time,       3);
-  setTextareaValues("manualAct",  actuator, 3);
-  setTextareaValues("manualSen",  sensor,   3);
-
-  // Charts en tiempo real (paso 3)
-  plotCapture(s.time.length);
-
-  // (Barra de progreso del buffer eliminada — el CSS .prog-row/.prog-wrap/.prog-bar
-  //  sigue en app.css por si queremos traerla de vuelta.)
+  writeLive("valAct",    actuator);
+  writeLive("valSP",     setpoint);
+  writeLive("valSensor", sensor);
 }
 
 
@@ -395,7 +529,7 @@ async function applyMappingChange() {
     setTextareaValues("manualTime", [], 3);
     setTextareaValues("manualAct",  [], 3);
     setTextareaValues("manualSen",  [], 3);
-    refreshLiveViews();
+    // El chart del paso 3 se redibuja en el próximo Inicio; aquí no forzamos.
 
     setStatus(
       `Mapeo actualizado — u: ${mapping.actuator || "—"} · ` +
@@ -457,7 +591,6 @@ function handleIdentificationResult(data) {
   // UI: habilitar botones que llevan al paso 4/5
   // (btnIdent ya está siempre visible: es el disparador manual)
   document.getElementById("btnToIdent").style.display = "";
-  document.getElementById("btnExport").style.display  = "";
 
   setStatus(
     "Identificación lista — mejor ajuste R²: " +

@@ -109,16 +109,57 @@ function setFormat(f) {
 }
 
 
-/* ==================== STATUS BAR ==================== */
+/* ==================== TOAST DE NOTIFICACIONES ==================== */
 
-/** Escribe un mensaje en la barra de estado. `cls`: "ok" | "running" | "error". */
+let _toastTimer = null;
+const _TOAST_AUTO_DISMISS_MS = 3500;
+
+/** Icono según tipo de estado. */
+function _toastIconClass(cls) {
+  if (cls === "ok")      return "fa-solid fa-circle-check";
+  if (cls === "error")   return "fa-solid fa-circle-exclamation";
+  if (cls === "warn")    return "fa-solid fa-triangle-exclamation";
+  if (cls === "running") return "fa-solid fa-circle-notch fa-spin";
+  return "fa-solid fa-circle-info";
+}
+
+/**
+ * Muestra una notificación tipo toast centrada bajo la topbar.
+ * @param {string} msg  Texto a mostrar.
+ * @param {string} cls  "ok" | "running" | "error" | (nada = info)
+ *
+ * Comportamiento:
+ *   - "ok"        → auto-dismiss a los 3.5 s.
+ *   - "error"     → persistente hasta que el usuario cierre o llegue otro estado.
+ *   - "running"   → persistente hasta que llegue otro estado.
+ *   - Cualquier llamada nueva REEMPLAZA la anterior (así un "ok" tapa un error
+ *     previo automáticamente cuando la operación se corrige).
+ */
 function setStatus(msg, cls) {
   const bar  = document.getElementById("statusBar");
   const span = document.getElementById("statusMsg");
+  const icon = document.getElementById("statusIcon");
   if (!bar || !span) return;
 
   span.textContent = msg;
-  bar.className    = "status-bar visible" + (cls ? " " + cls : "");
+  bar.className    = "toast visible" + (cls ? " " + cls : "");
+  if (icon) icon.className = "toast-icon " + _toastIconClass(cls);
+
+  clearTimeout(_toastTimer);
+  // "ok" y "warn" se auto-cierran. "error" y "running" persisten hasta que
+  // el usuario los cierre o llegue otro estado.
+  if (cls === "ok") {
+    _toastTimer = setTimeout(dismissStatus, _TOAST_AUTO_DISMISS_MS);
+  } else if (cls === "warn") {
+    _toastTimer = setTimeout(dismissStatus, 8000);  // más largo, es info útil
+  }
+}
+
+/** Oculta el toast manualmente (botón X). */
+function dismissStatus() {
+  const bar = document.getElementById("statusBar");
+  if (bar) bar.className = "toast";
+  clearTimeout(_toastTimer);
 }
 
 

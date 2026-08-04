@@ -22,12 +22,12 @@ document.addEventListener("DOMContentLoaded", () => {
   // ---------- Redraw del preview al cambiar tipo de señal actuador ----------
   document.getElementById("typeAct")?.addEventListener("change", () => {
     drawStepPreview();
-    // Los valores en vivo pueden cambiar de unidad
-    refreshLiveViews?.();
+    // Si hay ensayo capturado, se redibuja con las nuevas unidades.
+    if (typeof plotCapture === "function") plotCapture();
   });
 
   document.getElementById("typeSen")?.addEventListener("change", () => {
-    refreshLiveViews?.();
+    if (typeof plotCapture === "function") plotCapture();
   });
 
   // ---------- Cambio de variable (paso 1) -> reasignar mapeo en el backend ----------
@@ -35,8 +35,13 @@ document.addEventListener("DOMContentLoaded", () => {
   // leyendo las variables que se fijaron en el login.
   ["varAct", "varSen", "varSP"].forEach((id) => {
     document.getElementById(id)?.addEventListener("change", () => {
-      applyMappingChange?.();
+      applyMappingChange();
     });
+  });
+
+  // ---------- Cerrar toast de notificaciones ----------
+  document.getElementById("toastClose")?.addEventListener("click", () => {
+    if (typeof dismissStatus === "function") dismissStatus();
   });
 
   // ---------- Redraw del preview al resize ----------
@@ -46,16 +51,27 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // ---------- Auto-conexión WS ----------
+  // ---------- Auto-conexión WS (sin arrancar ensayo) ----------
   // Se abre la conexión apenas carga la app para que los dropdowns de
-  // variables (paso 1) se pueblen con lo que envía el backend. Si no
-  // hay sesión OPC UA activa, el WS conecta pero no llega ningún sample
-  // (documentado en el README). El botón "Inicio" del paso 3 sigue
-  // funcionando como reset del buffer.
-  if (typeof startCapture === "function") {
-    startCapture();
+  // variables (paso 1) se pueblen y los live values del paso 3 se
+  // actualicen. NO arranca un ensayo — para eso está el botón "Inicio"
+  // del paso 3, que resetea el buffer y arranca el timer.
+  if (typeof ensureWebSocket === "function") {
+    ensureWebSocket();
   }
 });
+
+
+/* =========================================================
+   IMPORTAR ARCHIVO (topbar)
+   Abre el selector de archivos del sistema operativo. Por ahora
+   sin lógica: solo dispara el picker. La carga real se cablea
+   cuando definamos el formato y el endpoint.
+   ========================================================= */
+function openFileImport() {
+  const input = document.getElementById("fileImportInput");
+  if (input) input.click();
+}
 
 
 /* =========================================================
@@ -69,6 +85,44 @@ function loadSample(scenario) {
       `Los datos deben provenir del PLC vía WebSocket.`,
     "error"
   );
+}
+
+
+/* =========================================================
+   MAPEO DE VARIABLES (paso 1)
+   Cuando el usuario cambia un <select> de variable en el paso 1,
+   se envía el mapeo completo al backend con POST /api/opcua/mapping.
+   El backend limpia el buffer y descarta la identificación en curso.
+   ========================================================= */
+async function applyMappingChange() {
+  // El mapping completo (5 roles). `time` y `signal_type` no tienen UI todavía,
+  // así que se preservan de lo que el backend nos mandó vía sample.mapping.
+  const mapping = {
+    time:        State.mapping.time        || null,
+    actuator:    document.getElementById("varAct")?.value || null,
+    sensor:      document.getElementById("varSen")?.value || null,
+    setpoint:    document.getElementById("varSP")?.value  || null,
+    signal_type: State.mapping.signal_type || null
+  };
+
+  setStatus("Actualizando mapeo de variables...", "running");
+
+  try {
+    const resp = await Backend.setMapping(mapping);
+
+    // El backend devuelve el mapping efectivo (con los null resueltos vía alias).
+    State.mapping = { ...State.mapping, ...(resp.mapping || mapping) };
+
+    // Aviso claro: el buffer y la identificación se descartaron.
+    setStatus(
+      "Mapeo actualizado. Buffer y última identificación descartados — " +
+        "espera a que llegue una nueva muestra.",
+      "ok"
+    );
+  } catch (err) {
+    console.error("Error al cambiar mapping:", err);
+    setStatus(`No se pudo cambiar el mapeo: ${err.message}`, "error");
+  }
 }
 
 

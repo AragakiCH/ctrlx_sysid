@@ -69,6 +69,35 @@ window.State = {
     connection:     null,
     started:        false,
     reconnectTimer: null
+  },
+
+  // ---------- Ensayo activo (paso 3) ----------
+  // Se activa con el botón "Inicio" y controla:
+  //   - Timer visible (contador de segundos).
+  //   - Aceptación de muestras en el sampleStore (fuera de ensayo se ignoran).
+  //   - Auto-parada al alcanzar durationS.
+  // `startedAt` es un timestamp (Date.now()); el tiempo relativo es
+  // (Date.now() - startedAt) / 1000, así el gráfico empieza en 0 s
+  // independientemente de lo que reporte el reloj interno del PLC.
+  ensayo: {
+    running:   false,
+    startedAt: null,
+    durationS: null,
+    timerId:   null
+  },
+
+  // ---------- Última muestra recibida del PLC ----------
+  // handleSample actualiza esto en cada mensaje `sample` (siempre, haya
+  // o no ensayo). tickEnsayo lo lee para llenar el chart del sensor con
+  // el valor real más reciente en cada tick — así se "muestrea" a la
+  // misma frecuencia que el actuador sintético.
+  latestSample: {
+    actuatorMa:  null,
+    actuatorPct: null,
+    sensorMa:    null,
+    sensorPct:   null,
+    setpointMa:  null,
+    setpointPct: null
   }
 };
 

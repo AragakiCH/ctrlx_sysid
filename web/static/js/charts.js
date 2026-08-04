@@ -93,27 +93,37 @@ function drawStepPreview() {
 
 /* ==================== PASO 3 · CAPTURA EN TIEMPO REAL ==================== */
 /**
- * Pinta los canvas cAct y cSen con los primeros `n` puntos del sample store.
- * Se llama desde websocket.js cada vez que llega una nueva muestra.
- * Si `n` es null, pinta todo el buffer.
+ * Pinta los canvas cAct y cSen con la ventana del ensayo.
+ * Eje X: FIJO de 0 a `durationS` (segundos), no rueda.
+ * Los puntos se posicionan por su tiempo relativo al inicio del ensayo,
+ * que se guarda en `sampleStore.time` (segundos desde Inicio).
+ *
+ * Se llama:
+ *   - Al iniciar un ensayo (chart vacío con eje 0..durationS).
+ *   - Cada vez que llega una muestra dentro de la ventana del ensayo.
  */
-function plotCapture(n) {
+function plotCapture() {
   const store = State.sampleStore;
   const type  = getSignalType();
+
+  const durationS =
+    Number(State.ensayo?.durationS) ||
+    Number(State.test?.step?.duration_s) ||
+    120;
 
   const time     = store.time;
   const actuator = type === "pct" ? store.actuator_pct : store.actuator_ma;
   const sensor   = type === "pct" ? store.sensor_pct   : store.sensor_ma;
 
-  const total = n == null ? time.length : n;
-  const labels = time.slice(0, total).map((v) => Number(v).toFixed(1));
+  const actData = time.map((t, i) => ({ x: t, y: actuator[i] }));
+  const senData = time.map((t, i) => ({ x: t, y: sensor[i] }));
 
-  drawTimeSeries("cAct", labels, actuator.slice(0, total), "#2a78d6");
-  drawTimeSeries("cSen", labels, sensor.slice(0, total),   "#1baf7a");
+  drawTimeSeries("cAct", actData, "#2a78d6", durationS);
+  drawTimeSeries("cSen", senData, "#1baf7a", durationS);
 }
 
-/** Helper interno — crea/actualiza un chart line simple. */
-function drawTimeSeries(canvasId, labels, data, color) {
+/** Helper interno — crea/actualiza un chart line con eje X lineal fijo. */
+function drawTimeSeries(canvasId, data, color, maxX) {
   const el = document.getElementById(canvasId);
   if (!el) return;
 
@@ -122,7 +132,6 @@ function drawTimeSeries(canvasId, labels, data, color) {
   State.charts[canvasId] = new Chart(el, {
     type: "line",
     data: {
-      labels,
       datasets: [{
         data,
         borderColor: color,
@@ -135,10 +144,20 @@ function drawTimeSeries(canvasId, labels, data, color) {
       responsive: true,
       maintainAspectRatio: false,
       animation: false,
+      parsing: false,  // data ya viene como {x,y}
       plugins: { legend: { display: false } },
       scales: {
         x: {
-          ticks: { color: "#898781", font: { size: 9 }, maxTicksLimit: 10 },
+          type: "linear",
+          min: 0,
+          max: maxX,
+          title: {
+            display: true,
+            text: "Tiempo (s)",
+            color: "#898781",
+            font: { size: 10 }
+          },
+          ticks: { color: "#898781", font: { size: 9 }, maxTicksLimit: 12 },
           grid:  { color: "rgba(0,0,0,0.05)" }
         },
         y: {

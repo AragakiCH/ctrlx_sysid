@@ -29,13 +29,16 @@
         <div class="api-dot" id="apiDot"></div>
         <span id="apiLabel">Sin conexión</span>
       </div>
+      <!-- Input oculto — se dispara programáticamente al presionar Importar.
+           Por ahora sin lógica de carga; solo abre el selector de archivos. -->
+      <input type="file" id="fileImportInput" style="display:none" />
       <button
         class="btn btn-secondary"
-        onclick="exportResults()"
-        id="btnExport"
-        style="display:none"
+        onclick="openFileImport()"
+        id="btnImport"
+        title="Importar archivo"
       >
-        <i class="fa-solid fa-download"></i> Importar
+        <i class="fa-solid fa-file-arrow-up"></i> Importar
       </button>
       <button
         class="btn btn-logout"
@@ -67,10 +70,13 @@
     </button>
   </nav>
 
-  <!-- ==================== STATUS BAR ==================== -->
-  <div class="status-bar" id="statusBar">
-    <i class="fa-solid fa-circle-info"></i>
+  <!-- ==================== TOAST DE NOTIFICACIONES ==================== -->
+  <div class="toast" id="statusBar" role="status" aria-live="polite">
+    <i class="toast-icon fa-solid fa-circle-info" id="statusIcon"></i>
     <span id="statusMsg"></span>
+    <button class="toast-close" id="toastClose" aria-label="Cerrar" type="button">
+      <i class="fa-solid fa-xmark"></i>
+    </button>
   </div>
 
   <!-- ==================== MAIN ==================== -->
@@ -267,6 +273,13 @@
 
     <!-- ═══════════ PASO 3: GRÁFICAS ═══════════ -->
     <section class="panel" id="p3">
+
+      <!-- Contador del ensayo (visible solo mientras corre) -->
+      <div class="ensayo-timer" id="ensayoTimerBox" style="display:none">
+        <i class="fa-solid fa-stopwatch ensayo-icon"></i>
+        <span class="ensayo-lbl">Tiempo de ensayo</span>
+        <span class="ensayo-val" id="ensayoCounter">—</span>
+      </div>
 
       <!-- Live values -->
       <div class="live-row">
@@ -489,8 +502,9 @@
   </script>
 
   <!-- ==================== SCRIPTS ==================== -->
-  <!-- Orden importante: state → ui → charts → bode → identification → pid → export → websocket → main -->
+  <!-- Orden importante: state → backend → ui → charts → bode → identification → pid → export → websocket → test_config → main -->
   <script src="/static/js/state.js"></script>
+  <script src="/static/js/backend.js"></script>
   <script src="/static/js/ui.js"></script>
   <script src="/static/js/charts.js"></script>
   <script src="/static/js/bode.js"></script>
