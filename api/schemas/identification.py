@@ -124,7 +124,25 @@ class IdentificationWindow(BaseModel):
 
 class IdentificationResult(BaseModel):
     step_index: int = Field(..., description="Índice del escalón dentro de la serie completa")
+    order: str = Field(
+        "auto",
+        description=(
+            "Orden pedido en las condiciones de ensayo. Con `auto` vienen los tres "
+            "modelos rankeados; con `fopdt`/`sopdt`/`integrating`, `models` trae uno solo."
+        ),
+    )
     winner: str = Field(..., description="model_type del modelo con mejor R²")
+    truncated: bool = Field(
+        False,
+        description=(
+            "True si la ventana usada fue más corta que la que pide `duration_s`. "
+            "El ajuste sigue siendo válido, pero se hizo sobre menos respuesta de "
+            "la prevista: conviene revisar que la curva haya llegado al nuevo estable."
+        ),
+    )
+    requested_post_samples: int = Field(
+        0, description="Muestras de respuesta que pedía la duración configurada"
+    )
     window: IdentificationWindow
     models: list[ModelResult] = Field(..., description="Ordenados de mejor a peor R²")
 
@@ -132,6 +150,7 @@ class IdentificationResult(BaseModel):
         "json_schema_extra": {
             "example": {
                 "step_index": 30,
+                "order": "auto",
                 "winner": "fopdt",
                 "window": {
                     "time": [0.0, 0.5, 1.0],

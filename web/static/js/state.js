@@ -25,6 +25,25 @@ window.State = {
     cBodePhase: null    // paso 4 — Bode fase
   },
 
+  // ---------- Mapeo rol -> variable del PLC ----------
+  // Lo envía el backend en cada sample (`sample.mapping`) y lo puede
+  // cambiar el usuario desde los <select> del paso 1.
+  mapping: {
+    time:        null,
+    actuator:    null,
+    sensor:      null,
+    setpoint:    null,
+    signal_type: null
+  },
+
+  // ---------- Ensayo y escalas (GET/POST /api/test) ----------
+  // El backend es la fuente de verdad de las conversiones mA/%/V.
+  test: {
+    scales:    { actuator: "ma", sensor: "ma", setpoint: "ma" },
+    step:      null,   // última respuesta de /api/test/config
+    available: []      // catálogo de escalas soportadas
+  },
+
   // ---------- Buffer de muestras en tiempo real ----------
   // Alimentado por websocket.js cuando llegan mensajes {type:"sample"}
   sampleStore: {

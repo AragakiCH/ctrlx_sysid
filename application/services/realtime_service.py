@@ -1,15 +1,42 @@
 from __future__ import annotations
 
 from collections import deque
-from typing import Deque, Optional
+from typing import Callable, Deque, Optional
 
 from domain.models.signals import SignalSeries
+from domain.services.scale_converter import DEFAULT_SCALE_KEY
+from domain.services.scale_converter import to_percent as scale_to_percent
+
+SCALED_ROLES = ("actuator", "sensor", "setpoint")
 
 
 class RealtimeService:
-    def __init__(self, max_buffer_size: int = 1000) -> None:
+    """
+    Buffer circular de muestras del PLC.
+
+    Cada muestra se guarda dos veces: el valor **crudo** tal como está en el PLC
+    (`actuator`, `sensor`, `setpoint`) y su equivalente en **% de span**
+    (`actuator_pct`, ...). La identificación siempre corre sobre el % para que la
+    ganancia del modelo sea adimensional.
+
+    La escala de cada rol la decide `TestConfigService` (lo que el usuario eligió
+    en los combos "Tipo de señal"). Si no se inyecta ninguno, se cae a 4-20 mA
+    cuando la variable `uiSignalType` del PLC vale 1, que era el comportamiento
+    anterior.
+    """
+
+    def __init__(
+        self,
+        max_buffer_size: int = 1000,
+        scale_provider: Optional[Callable[[str], str]] = None,
+    ) -> None:
         self.max_buffer_size = max_buffer_size
         self._buffer: Deque[dict] = deque(maxlen=max_buffer_size)
+        self._scale_provider = scale_provider
+
+    def set_scale_provider(self, provider: Optional[Callable[[str], str]]) -> None:
+        """Inyecta de dónde sacar la escala de cada rol (normalmente TestConfigService)."""
+        self._scale_provider = provider
 
     @staticmethod
     def ma_to_percent(value: float) -> float:
@@ -19,39 +46,53 @@ class RealtimeService:
     def percent_to_ma(value: float) -> float:
         return 4.0 + (value / 100.0) * 16.0
 
+    def _scale_for(self, role: str, signal_type) -> str:
+        if self._scale_provider is not None:
+            try:
+                return self._scale_provider(role)
+            except Exception:
+                pass
+
+        # Compatibilidad: sin proveedor, manda la variable del PLC.
+        return "ma" if signal_type == 1 else "pct"
+
     def normalize_sample(self, sample: dict) -> dict:
         if not isinstance(sample, dict):
             return sample
 
         normalized = dict(sample)
-
         signal_type = normalized.get("signal_type")
-        actuator = normalized.get("actuator")
-        sensor = normalized.get("sensor")
-        setpoint = normalized.get("setpoint")
 
-        if signal_type == 1:
-            if isinstance(actuator, (int, float)):
-                normalized["actuator_pct"] = self.ma_to_percent(float(actuator))
-            else:
-                normalized["actuator_pct"] = None
+        scales: dict[str, str] = {}
 
-            if isinstance(sensor, (int, float)):
-                normalized["sensor_pct"] = self.ma_to_percent(float(sensor))
-            else:
-                normalized["sensor_pct"] = None
+        for role in SCALED_ROLES:
+            scale_key = self._scale_for(role, signal_type) or DEFAULT_SCALE_KEY
+            scales[role] = scale_key
+            normalized[f"{role}_pct"] = scale_to_percent(normalized.get(role), scale_key)
 
-            if isinstance(setpoint, (int, float)):
-                normalized["setpoint_pct"] = self.ma_to_percent(float(setpoint))
-            else:
-                normalized["setpoint_pct"] = None
-
-        else:
-            normalized["actuator_pct"] = actuator if isinstance(actuator, (int, float)) else None
-            normalized["sensor_pct"] = sensor if isinstance(sensor, (int, float)) else None
-            normalized["setpoint_pct"] = setpoint if isinstance(setpoint, (int, float)) else None
+        # La vista usa esto para rotular los ejes sin adivinar la unidad.
+        normalized["scales"] = scales
 
         return normalized
+
+    def recompute_percent(self) -> int:
+        """
+        Recalcula los campos `_pct` de las muestras que ya están en el buffer.
+
+        `normalize_sample` corre al insertar, así que sin esto un cambio de
+        escala solo afectaría a las muestras nuevas: el ensayo que ya se capturó
+        seguiría interpretado con la escala vieja y la identificación daría
+        números que no corresponden a lo que muestra la vista.
+
+        Devuelve cuántas muestras se recalcularon.
+        """
+        samples = list(self._buffer)
+        self._buffer.clear()
+
+        for sample in samples:
+            self._buffer.append(self.normalize_sample(sample))
+
+        return len(samples)
 
     def add_sample(self, sample: dict) -> None:
         if not isinstance(sample, dict):

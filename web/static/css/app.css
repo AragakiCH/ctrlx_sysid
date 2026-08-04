@@ -267,6 +267,14 @@ textarea:focus {
   box-shadow: 0 0 0 3px var(--accent-bg);
 }
 
+/* El backend rechazó la configuración de ensayo (valor fuera de escala,
+   salto nulo, muy pocas muestras después del escalón...). */
+input.input-error,
+input.input-error:focus {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-bg);
+}
+
 .cols2    { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .cols3    { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
 .var-grid { display: grid; grid-template-columns: 1fr 140px 100px; gap: 10px; align-items: end; margin-bottom: 12px; }

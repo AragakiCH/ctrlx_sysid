@@ -14,11 +14,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.routes.health import router as health_router
 from api.routes.identification import router as identification_router
 from api.routes.opcua import router as opcua_router
+from api.routes.simulation import router as test_router
 from application.services.identification_pipeline_service import IdentificationPipelineService
 from application.services.identification_service import IdentificationService
 from application.services.opcua_session_service import OpcUaSessionService
 from application.services.realtime_service import RealtimeService
 from application.services.step_detector_service import StepDetectorService
+from application.services.test_config_service import TestConfigService
 from websocket.handlers import handle_ws_message
 from websocket.manager import ConnectionManager
 import uvicorn
@@ -65,11 +67,21 @@ Los endpoints están pensados para usarse en este orden:
 Cada muestra viaja en dos escalas:
 
 - `actuator`, `sensor`, `setpoint`: el valor **crudo** tal como está en el PLC
-- `actuator_pct`, `sensor_pct`, `setpoint_pct`: convertido a **0-100 %**
+- `actuator_pct`, `sensor_pct`, `setpoint_pct`: convertido a **0-100 % de span**
 
-La conversión de 4-20 mA a porcentaje solo se aplica si la variable mapeada
-como `signal_type` vale `1`. En cualquier otro caso los campos `_pct` repiten
-el valor crudo.
+La escala física de cada rol se declara en `POST /api/test/scales`
+(`ma` = 4-20 mA, `pct` = 0-100 %, `v` = 0-10 V) y la conversión ocurre
+**íntegramente en el backend**: no se escribe ninguna variable del PLC.
+
+Toda la identificación corre sobre el porcentaje, porque es la única escala en
+la que la ganancia del modelo es adimensional y las sintonías PID resultan
+comparables entre lazos.
+
+## Ensayo
+
+`POST /api/test/config` guarda el escalón que el operador va a aplicar desde el
+ctrlX. El backend no lo comanda; usa los números para fijar el umbral de
+detección, dimensionar la ventana de identificación y elegir el modelo.
 
 ## WebSocket
 
@@ -87,6 +99,14 @@ TAGS_METADATA = [
         "description": (
             "Resultados del motor de identificación. Se generan **automáticamente** "
             "cuando se detecta un escalón; no hay endpoint para dispararla a mano."
+        ),
+    },
+    {
+        "name": "Ensayo",
+        "description": (
+            "Escala física de cada señal (4-20 mA / 0-100 % / 0-10 V) y condiciones "
+            "del escalón. Las conversiones son **internas del backend**; no se "
+            "escribe nada en el PLC."
         ),
     },
     {"name": "Sistema", "description": "Chequeos de estado."},
@@ -124,8 +144,18 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
+SAMPLE_PERIOD_S = 0.2
+
 manager = ConnectionManager()
-realtime_service = RealtimeService(max_buffer_size=5000)
+
+# Escalas por rol y condiciones del ensayo. Es la fuente de verdad de las
+# conversiones mA/%/V: todo ocurre en el backend, sin escribir en el PLC.
+test_config_service = TestConfigService(sample_period_s=SAMPLE_PERIOD_S)
+
+realtime_service = RealtimeService(
+    max_buffer_size=5000,
+    scale_provider=test_config_service.scale_for,
+)
 identification_service = IdentificationService()
 step_detector_service = StepDetectorService(min_step_delta=1.0)
 pipeline_service = IdentificationPipelineService(
@@ -151,8 +181,14 @@ def reset_runtime_state() -> None:
 
 
 def get_current_use_percent() -> bool:
-    latest = realtime_service.get_latest_sample()
-    return bool(latest is not None and latest.get("signal_type") == 1)
+    """
+    La identificación siempre corre en % de span.
+
+    Ya no depende de `uiSignalType`: `RealtimeService` convierte cada rol con la
+    escala que el usuario eligió en la vista (4-20 mA / 0-100 % / 0-10 V), así
+    que los campos `_pct` son siempre la escala común correcta.
+    """
+    return True
 
 
 def on_sample(sample: dict) -> None:
@@ -182,6 +218,10 @@ def on_sample(sample: dict) -> None:
         if len(series.time) < 40:
             return
 
+        # El umbral y el tamaño de la ventana salen del ensayo configurado en la
+        # vista (paso 2), no de constantes fijas.
+        step_detector_service.min_step_delta = test_config_service.step_threshold_pct()
+
         step_index = step_detector_service.find_latest_rising_step_index(series.actuator)
         if step_index is None:
             return
@@ -189,7 +229,12 @@ def on_sample(sample: dict) -> None:
         if last_step_index is not None and abs(step_index - last_step_index) < min_separation_samples:
             return
 
-        result = pipeline_service.process_series(series)
+        result = pipeline_service.process_series(
+            series,
+            pre_samples=test_config_service.pre_samples(),
+            post_samples=test_config_service.post_samples(),
+            order=test_config_service.get_order(),
+        )
         if result is None:
             return
 
@@ -219,7 +264,7 @@ def on_sample(sample: dict) -> None:
 
 opcua_session_service = OpcUaSessionService(
     on_sample=on_sample,
-    period_s=0.2,
+    period_s=SAMPLE_PERIOD_S,
     reset_runtime_state=reset_runtime_state,
 )
 
@@ -229,11 +274,13 @@ app.state.identification_service = identification_service
 app.state.step_detector_service = step_detector_service
 app.state.pipeline_service = pipeline_service
 app.state.opcua_session_service = opcua_session_service
+app.state.test_config_service = test_config_service
 app.state.last_identification_result = None
 app.state.last_step_index = None
 
 app.include_router(opcua_router)
 app.include_router(identification_router)
+app.include_router(test_router)
 app.include_router(health_router)
 
 @app.on_event("startup")
@@ -296,12 +343,14 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 },
             )
 
-        if last_identification_result is not None:
+        # Se lee de app.state, no del global: `POST /api/identification/run`
+        # también escribe ahí y así el WS ve el resultado recalculado.
+        if app.state.last_identification_result is not None:
             await manager.send_json(
                 websocket,
                 {
                     "type": "identification_result",
-                    "data": last_identification_result,
+                    "data": app.state.last_identification_result,
                 },
             )
 
@@ -312,7 +361,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 realtime_service=realtime_service,
                 manager=manager,
                 websocket=websocket,
-                latest_identification_result=last_identification_result,
+                latest_identification_result=app.state.last_identification_result,
             )
 
     except WebSocketDisconnect:
@@ -323,4 +372,25 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
+    # Los .js, .css y .html se leen del disco en cada request, pero las rutas de
+    # Python solo se registran al arrancar. Sin recarga automática es fácil
+    # editar el backend, recargar el navegador y recibir 404 en un endpoint que
+    # "ya existe" en el archivo.
+    #
+    # Se vigilan solo los directorios de Python: si `web/` estuviera incluido,
+    # cada retoque al JS reiniciaría el proceso y con él se caería la sesión
+    # OPC UA y el buffer de muestras en medio de un ensayo.
+    reload_dirs = [
+        str(BASE_DIR / name)
+        for name in ("api", "application", "domain", "infrastructure", "websocket")
+        if (BASE_DIR / name).is_dir()
+    ]
+
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", "8001")),
+        reload=os.getenv("RELOAD", "1") != "0",
+        reload_dirs=reload_dirs,
+        reload_includes=["main.py"],
+    )

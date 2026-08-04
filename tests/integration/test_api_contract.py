@@ -177,7 +177,15 @@ def test_latest_devuelve_el_payload_completo(client, identified):
 
     body = client.get("/api/identification/latest").json()
 
-    assert set(body) == {"step_index", "winner", "window", "models"}
+    assert set(body) == {
+        "step_index",
+        "order",
+        "winner",
+        "truncated",
+        "requested_post_samples",
+        "window",
+        "models",
+    }
     assert body["winner"] == body["models"][0]["model_type"]
 
 

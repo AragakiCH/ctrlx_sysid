@@ -54,13 +54,24 @@ class IdentificationPipelineService:
         series,
         pre_samples: int = 10,
         post_samples: int = 40,
+        order: str = "auto",
     ) -> dict | None:
+        """
+        `order` viene de las condiciones de ensayo (paso 2 de la vista):
+
+        * `auto` — ajusta FOPDT, SOPDT e integrante y rankea por R².
+        * `fopdt` / `sopdt` / `integrating` — ajusta solo ese modelo. Igual se
+          devuelve como lista de un elemento para no cambiar el contrato con la UI.
+        """
         step_index = self.step_detector_service.find_latest_rising_step_index(series.actuator)
         if step_index is None:
             return None
 
+        # No identificar hasta tener la respuesta completa que pidió el ensayo.
+        # Si se ajusta con una ventana truncada la curva todavía no llegó al
+        # nuevo estable y tanto K como tau salen subestimados.
         post_available = len(series.time) - step_index
-        if post_available < 30:
+        if post_available < max(30, post_samples):
             return None
 
         window = self.step_detector_service.extract_window_from_step_index(
@@ -73,7 +84,14 @@ class IdentificationPipelineService:
         if window is None:
             return None
 
-        results = self.identification_service.compare_models(window)
+        if order and order != "auto":
+            try:
+                results = [self.identification_service.identify_from_series(window, order=order)]
+            except Exception:
+                return None
+        else:
+            results = self.identification_service.compare_models(window)
+
         if not results:
             return None
 
@@ -81,6 +99,7 @@ class IdentificationPipelineService:
 
         return {
             "step_index": step_index,
+            "order": order,
             "winner": best.model.model_type,
             # Ventana usada para identificar. La UI la necesita para graficar
             # el medido contra el simulado: el buffer completo tiene otra

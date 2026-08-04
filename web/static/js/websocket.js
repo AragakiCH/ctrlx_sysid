@@ -20,7 +20,6 @@ function startCapture() {
   // UI feedback
   document.getElementById("btnStart").style.display = "none";
   document.getElementById("btnStop").style.display  = "";
-  document.getElementById("btnIdent").style.display = "none";
   document.getElementById("btnToIdent").style.display = "none";
 
   setStatus("Conectando al PLC vía WebSocket...", "running");
@@ -50,15 +49,59 @@ function stopCapture() {
 
 
 /**
- * Botón "Identificar": en este backend la identificación se dispara
- * automáticamente cuando se detecta un escalón. Si ya llegó un
- * resultado, avanzamos al paso 4; si no, mostramos aviso.
+ * Botón "Identificar": fuerza el recálculo sobre el buffer actual con las
+ * condiciones de ensayo vigentes.
+ *
+ * La identificación automática corre una sola vez por escalón. Si después se
+ * cambia el orden del modelo o la escala de alguna señal, hay que pedirle al
+ * backend que recalcule; no hace falta repetir el ensayo en el PLC.
  */
-function runIdentification() {
-  if (State.identification.models.length) {
-    goStep(4);
-  } else {
-    setStatus("Aún no hay resultados. Espera a que el backend detecte un escalón.", "running");
+async function runIdentification(goToStep = true) {
+  setStatus("Identificando con el buffer actual...", "running");
+
+  try {
+    const data = await fetch(`${State.API_BASE}/api/identification/run`, {
+      method: "POST"
+    }).then(async (r) => {
+      const body = await r.json().catch(() => ({}));
+
+      if (r.status === 404) {
+        // Este archivo se lee del disco en cada request, pero las rutas de
+        // Python se registran al arrancar: el servidor viene de antes.
+        throw new Error(
+          "El backend no expone /api/identification/run todavía. Reinicia el servidor."
+        );
+      }
+
+      if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`);
+      return body;
+    });
+
+    handleIdentificationResult(data);
+
+    // El backend avisa si tuvo que ajustar con menos respuesta de la prevista.
+    if (data.truncated) {
+      setStatus(
+        `Identificado con ${data.window.count} muestras — la duración configurada ` +
+          `pedía ${data.requested_post_samples} después del escalón. Revisa que la ` +
+          `curva haya llegado al nuevo estable.`,
+        "running"
+      );
+    }
+
+    if (goToStep) goStep(4);
+    return data;
+  } catch (err) {
+    console.warn("No se pudo identificar:", err.message);
+
+    // Si ya había un resultado previo, al menos dejamos ver ese.
+    if (State.identification.models.length && goToStep) {
+      setStatus(`${err.message} — se muestra el último resultado.`, "error");
+      goStep(4);
+    } else {
+      setStatus(err.message, "error");
+    }
+    return null;
   }
 }
 
@@ -169,20 +212,23 @@ function handleWsMessage(msg) {
  * El backend puede mandar la muestra "cruda" (`raw`) o ya derivada.
  */
 function handleSample(data) {
+  // El mapeo efectivo lo manda el backend en cada sample.
+  if (data.mapping && typeof data.mapping === "object") {
+    State.mapping = { ...State.mapping, ...data.mapping };
+  }
+
   // Los dropdowns de variables (paso 1) se llenan con las llaves de `raw`.
   populateVariableDropdowns(data);
 
-  const raw = data.raw || {};
-
-  const timeValue = pickNumber(data.time, raw.rTimeSec, raw.rTiempoSeg, raw.arrTimeSec);
+  const timeValue = valueForRole(data, "time");
   if (timeValue === null) {
     console.warn("Sample sin tiempo válido:", data);
     return;
   }
 
-  const actuatorMa = pickNumber(data.actuator, raw.rActuator, raw.AO_Actuador_mA, raw.AO_Actuador);
-  const sensorMa   = pickNumber(data.sensor,   raw.rSensor,   raw.AI_Sensor_mA,   raw.AI_Sensor);
-  const setpointMa = pickNumber(data.setpoint, raw.rSetPoint, raw.SP_mA,          raw.SP);
+  const actuatorMa = valueForRole(data, "actuator");
+  const sensorMa   = valueForRole(data, "sensor");
+  const setpointMa = valueForRole(data, "setpoint");
 
   const actuatorPct = pickNumber(data.actuator_pct);
   const sensorPct   = pickNumber(data.sensor_pct);
@@ -198,6 +244,28 @@ function handleSample(data) {
   pushSample(s.setpoint_pct, setpointPct);
 
   refreshLiveViews();
+}
+
+
+/**
+ * Resuelve el valor de un rol sin nombres hardcodeados:
+ *   1. El campo ya normalizado por el backend (`data.actuator`, ...).
+ *   2. La variable cruda que el mapeo vigente asigna a ese rol.
+ * Así, si el usuario cambia el <select> a otra variable, se lee esa.
+ */
+function valueForRole(data, role) {
+  const direct = pickNumber(data[role]);
+  if (direct !== null) return direct;
+
+  const mapping = data.mapping || State.mapping || {};
+  const variableName = mapping[role];
+  const raw = data.raw || {};
+
+  if (variableName && variableName in raw) {
+    return pickNumber(raw[variableName]);
+  }
+
+  return null;
 }
 
 
@@ -281,6 +349,66 @@ function populateVariableDropdowns(sample) {
 }
 
 
+/* ==================== CAMBIO DE MAPEO EN CALIENTE ==================== */
+
+/**
+ * Lee los <select> del paso 1 y manda el nuevo mapeo al backend
+ * (POST /api/opcua/mapping). El backend reasigna qué variable lee para
+ * cada rol y limpia su buffer, así que aquí también limpiamos el nuestro:
+ * las muestras viejas se tomaron con otro mapeo.
+ */
+async function applyMappingChange() {
+  const mapping = {
+    // time y signal_type no son editables en la UI: se conserva
+    // lo que el backend ya resolvió (alias por defecto o login).
+    time:        State.mapping.time        || null,
+    signal_type: State.mapping.signal_type || null,
+    actuator:    document.getElementById("varAct")?.value || null,
+    sensor:      document.getElementById("varSen")?.value || null,
+    setpoint:    document.getElementById("varSP")?.value  || null
+  };
+
+  setStatus("Aplicando nuevo mapeo de variables...", "running");
+
+  try {
+    const response = await fetch(`${State.API_BASE}/api/opcua/mapping`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ mapping })
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(data.detail || `HTTP ${response.status}`);
+    }
+
+    State.mapping = { ...State.mapping, ...(data.mapping || mapping) };
+
+    try {
+      localStorage.setItem("plcMapping", JSON.stringify(State.mapping));
+    } catch (_) {}
+
+    // El buffer viejo ya no es válido: se capturó con otras variables.
+    resetSampleStore();
+    clearLiveValues();
+    setTextareaValues("manualTime", [], 3);
+    setTextareaValues("manualAct",  [], 3);
+    setTextareaValues("manualSen",  [], 3);
+    refreshLiveViews();
+
+    setStatus(
+      `Mapeo actualizado — u: ${mapping.actuator || "—"} · ` +
+        `y: ${mapping.sensor || "—"} · SP: ${mapping.setpoint || "—"}`,
+      "ok"
+    );
+  } catch (err) {
+    console.error("Error actualizando mapeo:", err);
+    setStatus(`No se pudo actualizar el mapeo: ${err.message}`, "error");
+  }
+}
+
+
 function writeLive(id, value) {
   const el = document.getElementById(id);
   if (!el) return;
@@ -327,7 +455,7 @@ function handleIdentificationResult(data) {
   renderPID(models, State.identification.active);
 
   // UI: habilitar botones que llevan al paso 4/5
-  document.getElementById("btnIdent").style.display   = "";
+  // (btnIdent ya está siempre visible: es el disparador manual)
   document.getElementById("btnToIdent").style.display = "";
   document.getElementById("btnExport").style.display  = "";
 

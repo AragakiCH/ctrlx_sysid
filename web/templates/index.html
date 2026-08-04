@@ -318,7 +318,10 @@
         <button class="btn btn-primary" id="btnStart" onclick="startCapture()">
           <i class="fa-solid fa-play"></i> Inicio
         </button>
-        <button class="btn btn-primary" id="btnIdent" onclick="runIdentification()" style="display:none">
+        <!-- Siempre visible: es el disparador manual de la identificación.
+             Si estaba oculto hasta tener un resultado, no había forma de
+             provocar el primero cuando la detección automática no saltaba. -->
+        <button class="btn btn-primary" id="btnIdent" onclick="runIdentification()">
           <i class="fa-solid fa-microchip"></i> Identificar
         </button>
         <button class="btn btn-primary" id="btnToIdent" onclick="goStep(4)" style="display:none">
@@ -495,6 +498,7 @@
   <script src="/static/js/pid.js"></script>
   <script src="/static/js/export.js"></script>
   <script src="/static/js/websocket.js"></script>
+  <script src="/static/js/test_config.js"></script>
   <script src="/static/js/main.js"></script>
 </body>
 </html>

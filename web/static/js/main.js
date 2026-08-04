@@ -30,6 +30,15 @@ document.addEventListener("DOMContentLoaded", () => {
     refreshLiveViews?.();
   });
 
+  // ---------- Cambio de variable (paso 1) -> reasignar mapeo en el backend ----------
+  // Sin esto los <select> son puramente decorativos: el PLCReader sigue
+  // leyendo las variables que se fijaron en el login.
+  ["varAct", "varSen", "varSP"].forEach((id) => {
+    document.getElementById(id)?.addEventListener("change", () => {
+      applyMappingChange?.();
+    });
+  });
+
   // ---------- Redraw del preview al resize ----------
   window.addEventListener("resize", () => {
     if (document.getElementById("p2")?.classList.contains("active")) {
