@@ -44,8 +44,15 @@ window.State = {
     available: []      // catálogo de escalas soportadas
   },
 
-  // ---------- Buffer de muestras en tiempo real ----------
-  // Alimentado por websocket.js cuando llegan mensajes {type:"sample"}
+  // ---------- Buffer de muestras del ensayo ----------
+  // Lo llena websocket.js con los mensajes {type:"test_tick"} del backend.
+  //
+  // El sufijo `_ma` es histórico: en realidad guarda el valor en la escala
+  // que el usuario declaró para ese rol (4-20 mA, 0-100 % o 0-10 V). La
+  // unidad real viene en `State.ensayo.plan.unit`.
+  //
+  // No hay tope de puntos: el ensayo tiene largo acotado
+  // (duration_s / sample_period_s), así que el buffer no crece sin fin.
   sampleStore: {
     time:         [],
     actuator_ma:  [],
@@ -53,8 +60,7 @@ window.State = {
     setpoint_ma:  [],
     actuator_pct: [],
     sensor_pct:   [],
-    setpoint_pct: [],
-    maxPoints:    300
+    setpoint_pct: []
   },
 
   // ---------- Resultados de identificación ----------
@@ -72,25 +78,30 @@ window.State = {
   },
 
   // ---------- Ensayo activo (paso 3) ----------
-  // Se activa con el botón "Inicio" y controla:
-  //   - Timer visible (contador de segundos).
-  //   - Aceptación de muestras en el sampleStore (fuera de ensayo se ignoran).
-  //   - Auto-parada al alcanzar durationS.
-  // `startedAt` es un timestamp (Date.now()); el tiempo relativo es
-  // (Date.now() - startedAt) / 1000, así el gráfico empieza en 0 s
-  // independientemente de lo que reporte el reloj interno del PLC.
+  // EL RELOJ VIVE EN EL BACKEND. Aquí solo se refleja lo que llega por
+  // WebSocket (test_started / test_tick / test_finished / test_stopped).
+  //
+  // Antes esto lo generaba un setInterval del navegador. Se movió al backend
+  // porque Chrome estrangula los timers de las pestañas en segundo plano
+  // (los baja a 1 Hz o menos): el escalón se aplicaría tarde, o nunca. Y
+  // cuando el backend escriba en el PLC, tiene que ser el mismo reloj.
+  //
+  // `plan` es el perfil completo del actuador que manda `test_started`:
+  // permite dibujar la línea objetivo entera desde el primer instante, en
+  // vez de irla descubriendo punto a punto.
   ensayo: {
     running:   false,
-    startedAt: null,
     durationS: null,
-    timerId:   null
+    elapsedS:  0,
+    plan:      null,
+    phase:     null   // "baseline" (antes del salto) | "step" (después)
   },
 
   // ---------- Última muestra recibida del PLC ----------
   // handleSample actualiza esto en cada mensaje `sample` (siempre, haya
-  // o no ensayo). tickEnsayo lo lee para llenar el chart del sensor con
-  // el valor real más reciente en cada tick — así se "muestrea" a la
-  // misma frecuencia que el actuador sintético.
+  // o no ensayo). onTestTick lo lee para llenar el chart del sensor con
+  // el valor real más reciente en cada tick — sample-and-hold: la señal
+  // del PLC se muestrea al ritmo que marca el ensayo del backend.
   latestSample: {
     actuatorMa:  null,
     actuatorPct: null,

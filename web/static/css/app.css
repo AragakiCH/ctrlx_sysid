@@ -1202,3 +1202,69 @@ hr {
   .live-val   { font-size: 19px; }
   .ensayo-val { font-size: 19px; }
 }
+
+/* ==================== 26. ARMADO DE ESCRITURA AL PLC ==================== */
+/* Mientras no esté armado, el ensayo solo dibuja. Cuando lo está, la tarjeta
+   cambia de color: mover un actuador real no puede pasar desapercibido. */
+
+.writer-card {
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border-left: 3px solid var(--border-strong);
+  transition: border-color var(--t), background var(--t);
+}
+
+.writer-card.armed {
+  border-left-color: var(--danger);
+  background: var(--danger-bg);
+}
+
+.writer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.writer-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.writer-toggle input {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--danger);
+}
+
+.writer-badge {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  color: var(--text2);
+  white-space: nowrap;
+}
+
+.writer-card.armed .writer-badge {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--text-inverse);
+}
+
+.writer-hint {
+  margin: 8px 0 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text2);
+}

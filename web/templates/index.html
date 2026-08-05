@@ -297,6 +297,23 @@
         </div>
       </div>
 
+      <!-- Armado de la escritura al PLC.
+           Mientras no se arme, el ensayo solo dibuja el perfil: el actuador
+           no se mueve. Es un paso aparte a propósito, para que pulsar
+           "Inicio" no mueva equipo por accidente. -->
+      <div class="card writer-card" id="writerCard">
+        <div class="writer-row">
+          <label class="writer-toggle">
+            <input type="checkbox" id="chkWriter" onchange="toggleWriter()" />
+            <span>Escribir en el PLC durante el ensayo</span>
+          </label>
+          <span class="writer-badge" id="writerBadge">Solo dibujo</span>
+        </div>
+        <p class="writer-hint" id="writerHint">
+          Sin activar, el ensayo dibuja el escalón pero no toca el actuador.
+        </p>
+      </div>
+
       <div class="chart-card">
         <div class="chart-hdr">
           Señal de entrada — actuador (u)

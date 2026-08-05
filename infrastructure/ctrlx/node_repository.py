@@ -207,6 +207,25 @@ class NodeRepository:
         variables.sort(key=lambda v: v.name.lower())
         return variables
 
+    def find_variable_node(self, program_node, name: str):
+        """
+        Nodo hijo cuyo browse name coincide con `name`, ignorando mayúsculas,
+        espacios y guiones. Devuelve None si no existe.
+        """
+        if not name:
+            return None
+
+        target = normalize_name(name)
+
+        for child in program_node.get_children():
+            try:
+                if normalize_name(child.get_browse_name().Name) == target:
+                    return child
+            except Exception:
+                continue
+
+        return None
+
     def read_program_values(self, program_node) -> dict[str, Any]:
         """Lectura cruda nombre -> valor de todos los hijos del programa."""
         values: dict[str, Any] = {}

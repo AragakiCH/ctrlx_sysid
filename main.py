@@ -21,6 +21,7 @@ from application.services.opcua_session_service import OpcUaSessionService
 from application.services.realtime_service import RealtimeService
 from application.services.step_detector_service import StepDetectorService
 from application.services.test_config_service import TestConfigService
+from application.services.test_runner_service import TestRunnerService
 from websocket.handlers import handle_ws_message
 from websocket.manager import ConnectionManager
 import uvicorn
@@ -169,6 +170,32 @@ last_step_index: int | None = None
 min_separation_samples = 20
 
 
+def broadcast_from_thread(message: dict) -> None:
+    """
+    Publica un mensaje por WebSocket desde un hilo que no es el del event loop.
+
+    Tanto el lector del PLC como el runner del ensayo corren en hilos propios,
+    y `manager.broadcast_json` es una corrutina: hay que agendarla en el loop.
+    Si el loop todavía no arrancó, el mensaje se descarta en silencio (solo pasa
+    en el arranque, cuando aún no hay nadie conectado).
+    """
+    if event_loop is None:
+        return
+
+    try:
+        asyncio.run_coroutine_threadsafe(manager.broadcast_json(message), event_loop)
+    except Exception:
+        pass
+
+
+# Ejecuta el perfil del actuador con su propio reloj. En esta fase solo calcula
+# y publica el valor comandado: no escribe en el PLC (ver set_writer).
+test_runner_service = TestRunnerService(
+    test_config_service=test_config_service,
+    on_event=broadcast_from_thread,
+)
+
+
 def reset_runtime_state() -> None:
     global last_identification_result, last_step_index
 
@@ -194,22 +221,23 @@ def get_current_use_percent() -> bool:
 def on_sample(sample: dict) -> None:
     global event_loop, last_identification_result, last_step_index
 
+    # Etiqueta la muestra con lo que el ensayo estaba comandando en ese instante.
+    # Va en campos aparte (`actuator_cmd`) y NO pisa el `actuator` leído del PLC:
+    # así se puede comparar lo que se pidió contra lo que hizo la planta y
+    # detectar que el actuador no obedeció, saturó o llegó tarde.
+    command = test_runner_service.current_command()
+    if command is not None:
+        sample.update(command)
+
     realtime_service.add_sample(sample)
     latest_normalized = realtime_service.get_latest_sample()
 
-    if event_loop is not None:
-        try:
-            asyncio.run_coroutine_threadsafe(
-                manager.broadcast_json(
-                    {
-                        "type": "sample",
-                        "data": latest_normalized if latest_normalized is not None else sample,
-                    }
-                ),
-                event_loop,
-            )
-        except Exception:
-            pass
+    broadcast_from_thread(
+        {
+            "type": "sample",
+            "data": latest_normalized if latest_normalized is not None else sample,
+        }
+    )
 
     try:
         use_percent = get_current_use_percent()
@@ -244,19 +272,7 @@ def on_sample(sample: dict) -> None:
         app.state.last_identification_result = last_identification_result
         app.state.last_step_index = last_step_index
 
-        if event_loop is not None:
-            try:
-                asyncio.run_coroutine_threadsafe(
-                    manager.broadcast_json(
-                        {
-                            "type": "identification_result",
-                            "data": result,
-                        }
-                    ),
-                    event_loop,
-                )
-            except Exception:
-                pass
+        broadcast_from_thread({"type": "identification_result", "data": result})
 
     except Exception:
         pass
@@ -275,6 +291,9 @@ app.state.step_detector_service = step_detector_service
 app.state.pipeline_service = pipeline_service
 app.state.opcua_session_service = opcua_session_service
 app.state.test_config_service = test_config_service
+app.state.test_runner_service = test_runner_service
+# Las rutas la usan para limpiar el buffer al arrancar un ensayo.
+app.state.reset_runtime_state = reset_runtime_state
 app.state.last_identification_result = None
 app.state.last_step_index = None
 
@@ -291,6 +310,9 @@ async def startup_event() -> None:
 
 @app.on_event("shutdown")
 async def shutdown_event() -> None:
+    # El ensayo primero: si se apaga el lector antes, el runner seguiría
+    # comandando contra una sesión ya cerrada.
+    test_runner_service.stop()
     opcua_session_service.stop()
 
 
@@ -354,6 +376,20 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 },
             )
 
+        # Si se recarga la página en mitad de un ensayo, el cliente nuevo tiene
+        # que poder engancharse sin esperar al siguiente tick.
+        if test_runner_service.is_running():
+            await manager.send_json(
+                websocket,
+                {
+                    "type": "test_state",
+                    "data": {
+                        **test_runner_service.get_state(),
+                        "plan": test_runner_service.get_plan(),
+                    },
+                },
+            )
+
         while True:
             message = await websocket.receive_json()
             await handle_ws_message(
@@ -362,6 +398,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 manager=manager,
                 websocket=websocket,
                 latest_identification_result=app.state.last_identification_result,
+                test_runner_service=test_runner_service,
             )
 
     except WebSocketDisconnect:

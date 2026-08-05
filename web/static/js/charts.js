@@ -118,28 +118,60 @@ function plotCapture() {
   const actData = time.map((t, i) => ({ x: t, y: actuator[i] }));
   const senData = time.map((t, i) => ({ x: t, y: sensor[i] }));
 
-  drawTimeSeries("cAct", actData, "#2a78d6", durationS);
+  drawTimeSeries("cAct", actData, "#2a78d6", durationS, buildPlanOverlay(type));
   drawTimeSeries("cSen", senData, "#1baf7a", durationS);
 }
 
-/** Helper interno — crea/actualiza un chart line con eje X lineal fijo. */
-function drawTimeSeries(canvasId, data, color, maxX) {
+
+/**
+ * Línea objetivo del actuador: el perfil COMPLETO que mandó `test_started`.
+ *
+ * Se dibuja punteada y por debajo de lo capturado. Sirve para ver a dónde va
+ * el ensayo desde el primer segundo, en vez de descubrirlo punto a punto, y
+ * para notar de un vistazo si lo capturado se desvía del plan.
+ */
+function buildPlanOverlay(type) {
+  const plan = State.ensayo?.plan;
+  if (!plan || !Array.isArray(plan.time) || !plan.time.length) return null;
+
+  const values = type === "pct" ? plan.actuator_pct : plan.actuator;
+  if (!Array.isArray(values)) return null;
+
+  return {
+    data: plan.time.map((t, i) => ({ x: t, y: values[i] })),
+    borderColor: "rgba(42,120,214,0.35)",
+    borderWidth: 1.5,
+    borderDash: [6, 4],
+    pointRadius: 0,
+    tension: 0
+  };
+}
+
+
+/**
+ * Helper interno — crea/actualiza un chart line con eje X lineal fijo.
+ * `overlay` es un dataset opcional que se pinta DEBAJO de `data`.
+ */
+function drawTimeSeries(canvasId, data, color, maxX, overlay = null) {
   const el = document.getElementById(canvasId);
   if (!el) return;
 
   if (State.charts[canvasId]) State.charts[canvasId].destroy();
 
+  // El overlay va primero para que quede detrás de la serie capturada.
+  const datasets = [];
+  if (overlay) datasets.push(overlay);
+  datasets.push({
+    data,
+    borderColor: color,
+    borderWidth: 2,
+    pointRadius: 0,
+    tension: 0.1
+  });
+
   State.charts[canvasId] = new Chart(el, {
     type: "line",
-    data: {
-      datasets: [{
-        data,
-        borderColor: color,
-        borderWidth: 2,
-        pointRadius: 0,
-        tension: 0.1
-      }]
-    },
+    data: { datasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,

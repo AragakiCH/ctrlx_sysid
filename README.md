@@ -17,6 +17,7 @@ transferencia y las constantes PID por varios métodos.
 - [Unidades](#unidades)
 - [Referencia REST](#referencia-rest)
 - [Protocolo WebSocket](#protocolo-websocket)
+- [Ejecución del ensayo](#ejecución-del-ensayo)
 - [Payload de identificación](#payload-de-identificación)
 - [Notas de integración](#notas-de-integración)
 - [Tests](#tests)
@@ -590,6 +591,103 @@ Ver [Payload de identificación](#payload-de-identificación).
 
 ---
 
+#### `test_started` — arranca el ensayo
+
+Se emite al llamar a `POST /api/test/start`. Trae el **perfil completo** del
+actuador, para que la vista pinte la línea objetivo de una sola vez en lugar de
+irla dibujando punto a punto.
+
+```json
+{
+  "type": "test_started",
+  "data": {
+    "status": "running",
+    "running": true,
+    "elapsed_s": 0.0,
+    "duration_s": 120.0,
+    "index": 0,
+    "total": 600,
+    "progress": 0.0017,
+    "actuator_cmd": 8.0,
+    "actuator_cmd_pct": 25.0,
+    "phase": "baseline",
+    "started_at": 1754212800.42,
+    "writes_enabled": false,
+    "write_errors": 0,
+    "last_write_error": null,
+    "plan": {
+      "time": [0.0, 0.2, 0.4],
+      "actuator": [8.0, 8.0, 8.0],
+      "actuator_pct": [25.0, 25.0, 25.0],
+      "unit": "mA",
+      "sample_period_s": 0.2,
+      "duration_s": 120.0,
+      "step_at_s": 10.0,
+      "from_value": 8.0,
+      "to_value": 12.0,
+      "from_value_pct": 25.0,
+      "to_value_pct": 50.0,
+      "samples": 600
+    }
+  }
+}
+```
+
+> `plan` tiene **una entrada por muestra** del ensayo, al mismo periodo con el
+> que se ejecuta. No confundir con `GET /api/test/preview`, que reparte N puntos
+> repartidos solo para dibujar.
+
+---
+
+#### `test_tick` — avance del ensayo
+
+Uno por muestra, al periodo configurado. Mismos campos que `test_started` pero
+sin `plan`, más `written`.
+
+```json
+{
+  "type": "test_tick",
+  "data": {
+    "status": "running",
+    "running": true,
+    "elapsed_s": 12.4,
+    "index": 62,
+    "total": 600,
+    "progress": 0.105,
+    "actuator_cmd": 12.0,
+    "actuator_cmd_pct": 50.0,
+    "phase": "step",
+    "written": false,
+    "write_errors": 0
+  }
+}
+```
+
+| Campo | Notas |
+|---|---|
+| `phase` | `baseline` antes del salto, `step` después |
+| `actuator_cmd` | Valor comandado, en la escala del actuador |
+| `written` | `true` si se escribió en el PLC. Hoy siempre `false` |
+| `elapsed_s` | Reloj **monótono** del backend, inmune a cambios de hora |
+
+---
+
+#### `test_finished` / `test_stopped`
+
+`test_finished` al completar la duración; `test_stopped` si se corta con
+`POST /api/test/stop`. Mismos campos, con `status` en `finished` o `stopped` y
+`running: false`.
+
+---
+
+#### `test_state` — respuesta a `get_test_state`
+
+Se envía también **al conectar**, si hay un ensayo en curso, para que una pestaña
+recién abierta se enganche sin esperar al siguiente tick. Incluye `plan` solo
+cuando el ensayo está corriendo.
+
+---
+
 #### `pong`, `buffer_cleared`, `error`
 
 ```json
@@ -597,6 +695,69 @@ Ver [Payload de identificación](#payload-de-identificación).
 { "type": "buffer_cleared" }
 { "type": "error", "message": "Mensaje no soportado: foo" }
 ```
+
+---
+
+## Ejecución del ensayo
+
+El escalón lo genera el **backend**, no el navegador.
+
+### Por qué el reloj vive en el backend
+
+Antes el perfil se calculaba en el navegador con un `setInterval` de 200 ms. Eso
+sirve para dibujar, pero no para gobernar un proceso:
+
+- Los navegadores **estrangulan los timers** de las pestañas en segundo plano
+  (Chrome los baja a 1 Hz o menos). El escalón se aplicaría tarde, o nunca.
+- Si el operador cierra la pestaña, el ensayo queda a medias y el actuador se
+  queda en el último valor comandado.
+- Con varias pestañas abiertas habría varios relojes compitiendo.
+
+Teniendo el reloj en el backend el ensayo es uno solo, sobrevive a que se cierre
+el navegador, y es el mismo hilo que va a escribir en el PLC.
+
+### Ciclo
+
+```
+POST /api/test/config     -> guarda el escalón (paso 2 de la vista)
+POST /api/test/start      -> arranca; limpia el buffer por defecto
+   WS: test_started       -> plan completo
+   WS: test_tick  x N     -> uno por muestra
+   WS: test_finished      -> al completar duration_s
+POST /api/identification/run  -> ajusta los modelos sobre lo capturado
+```
+
+`POST /api/test/stop` corta antes de tiempo y emite `test_stopped`. Las muestras
+capturadas **se conservan**: si alcanzan, se puede identificar igual.
+
+### El comando en las muestras
+
+Mientras hay un ensayo corriendo, cada `sample` se etiqueta con lo que el
+backend estaba comandando en ese instante:
+
+| Campo | Qué es |
+|---|---|
+| `actuator` | Lo que el PLC **reporta**. No se toca |
+| `actuator_cmd` | Lo que el backend **pidió** |
+| `actuator_cmd_pct` | Lo mismo en % de span |
+| `test_phase` | `baseline` o `step` |
+| `test_elapsed_s` | Segundos desde el arranque del ensayo |
+
+Van en campos aparte a propósito: comparar `actuator` contra `actuator_cmd` es lo
+que permite detectar que el actuador saturó, llegó tarde o directamente no
+obedeció. Fuera de un ensayo estos campos **no aparecen** en la muestra.
+
+### Escritura al PLC
+
+**Todavía no se escribe nada.** El operador sigue aplicando el escalón desde el
+ctrlX; el backend solo calcula y publica el valor.
+
+El punto de extensión es `TestRunnerService.set_writer()`: recibe una función que
+se llama en cada tick con el valor a aplicar, en la escala del actuador. Cuando
+esté conectada, `writes_enabled` pasa a `true` y cada `test_tick` reportará
+`written`. Un fallo de escritura no aborta el ensayo: se cuenta en
+`write_errors` y se sigue, para que un error puntual de red no deje el actuador
+a medio camino.
 
 ---
 

@@ -7,6 +7,7 @@ async def handle_ws_message(
     manager,
     websocket,
     latest_identification_result=None,
+    test_runner_service=None,
 ) -> None:
     msg_type = message.get("type")
 
@@ -44,6 +45,23 @@ async def handle_ws_message(
                 "data": latest_identification_result,
             },
         )
+        return
+
+    if msg_type == "get_test_state":
+        # Permite reconstruir el estado del ensayo al recargar la página sin
+        # esperar al siguiente tick. Si hay uno en curso se manda también el
+        # plan, que es lo que la vista necesita para redibujar la línea objetivo.
+        if test_runner_service is None:
+            await manager.send_json(websocket, {"type": "test_state", "data": None})
+            return
+
+        state = test_runner_service.get_state()
+        payload = dict(state)
+
+        if state.get("running"):
+            payload["plan"] = test_runner_service.get_plan()
+
+        await manager.send_json(websocket, {"type": "test_state", "data": payload})
         return
 
     if msg_type == "clear_buffer":

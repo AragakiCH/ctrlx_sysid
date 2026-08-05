@@ -28,6 +28,12 @@ function goStep(n) {
       Object.values(State.charts).forEach((c) => c && c.resize && c.resize());
     }, 60);
   }
+
+  // Al entrar al paso 3 hay que reflejar si la escritura está armada: el
+  // estado vive en el backend y pudo cambiar (logout, cambio de mapeo).
+  if (n === 3 && typeof refreshWriterState === "function") {
+    refreshWriterState();
+  }
 }
 
 

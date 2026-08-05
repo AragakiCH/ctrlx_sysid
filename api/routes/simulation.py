@@ -22,7 +22,12 @@ from api.schemas.simulation import (
     StepPreviewResponse,
     TestConfigRequest,
     TestConfigResponse,
+    TestPlan,
+    TestRunState,
     TestSnapshotResponse,
+    TestStartResponse,
+    WriterRequest,
+    WriterResponse,
 )
 from domain.services.scale_converter import convert as convert_value
 from domain.services.scale_converter import to_percent
@@ -36,6 +41,10 @@ VALIDATION_ERRORS = {
 
 def _service(request: Request):
     return request.app.state.test_config_service
+
+
+def _runner(request: Request):
+    return request.app.state.test_runner_service
 
 
 # --------------------------------------------------------------------------- #
@@ -189,6 +198,210 @@ def convert(body: ConvertRequest) -> dict:
         "result": result,
         "percent": percent,
     }
+
+
+# --------------------------------------------------------------------------- #
+# Ejecución del ensayo
+# --------------------------------------------------------------------------- #
+
+
+@router.get(
+    "/plan",
+    response_model=TestPlan,
+    responses=VALIDATION_ERRORS,
+    summary="Perfil del actuador, muestra a muestra",
+    description=(
+        "Devuelve el perfil que el backend va a comandar: **una entrada por "
+        "muestra** del ensayo, al mismo periodo con el que se ejecutará.\n\n"
+        "No confundir con `/preview`, que reparte N puntos solo para dibujar la "
+        "vista previa del paso 2. Aquí `time[i]` es el instante real de la "
+        "muestra `i`.\n\n"
+        "Si hay un ensayo en curso devuelve el plan de ESE ensayo (congelado al "
+        "arrancar); si no, el que se generaría con la configuración actual."
+    ),
+)
+def get_plan(request: Request) -> dict:
+    try:
+        return _runner(request).get_plan()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get(
+    "/run",
+    response_model=TestRunState,
+    summary="Estado del ensayo",
+    description=(
+        "Avance del ensayo en curso. Responde siempre 200: si no hay ninguno, "
+        "`status` vale `idle`.\n\n"
+        "Los mismos datos llegan por WebSocket en cada `test_tick`, así que la "
+        "vista normalmente no necesita hacer polling sobre este endpoint. Está "
+        "para diagnosticar y para reconstruir el estado al recargar la página."
+    ),
+)
+def get_run_state(request: Request) -> dict:
+    return _runner(request).get_state()
+
+
+@router.post(
+    "/start",
+    response_model=TestStartResponse,
+    responses=VALIDATION_ERRORS,
+    summary="Arrancar el ensayo",
+    description=(
+        "Arranca el reloj del ensayo en el backend y empieza a emitir eventos "
+        "por WebSocket: `test_started` con el plan completo, luego un "
+        "`test_tick` por muestra, y `test_finished` al terminar.\n\n"
+        "**El reloj vive en el backend, no en el navegador.** Así el ensayo "
+        "sobrevive a que se cierre la pestaña y no depende de los timers del "
+        "navegador, que se estrangulan en segundo plano.\n\n"
+        "Por defecto limpia el buffer de muestras y descarta la identificación "
+        "anterior, para que el ensayo nuevo no arrastre datos del anterior.\n\n"
+        "**En esta fase no se escribe nada en el PLC**: el runner solo calcula y "
+        "publica el valor comandado. El operador sigue aplicando el escalón "
+        "desde el ctrlX. `writes_enabled` indica si eso ya cambió.\n\n"
+        "Devuelve 400 si ya hay un ensayo corriendo o si la configuración del "
+        "paso 2 no es válida."
+    ),
+)
+def start_test(
+    request: Request,
+    clear_buffer: bool = Query(
+        True,
+        description="Vaciar el buffer y la identificación previa antes de arrancar.",
+    ),
+) -> dict:
+    runner = _runner(request)
+
+    if runner.is_running():
+        raise HTTPException(
+            status_code=400,
+            detail="Ya hay un ensayo en curso. Deténlo antes de arrancar otro.",
+        )
+
+    if clear_buffer:
+        # Se limpia ANTES de arrancar: si se hiciera después, las primeras
+        # muestras del ensayo nuevo se borrarían junto con las viejas.
+        request.app.state.reset_runtime_state()
+
+    try:
+        return runner.start()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get(
+    "/writer",
+    response_model=WriterResponse,
+    summary="Estado de la escritura al PLC",
+    description=(
+        "Dice si el ensayo va a **mover el actuador** o solo dibujar, y si la "
+        "variable mapeada admite escritura."
+    ),
+)
+def get_writer(request: Request) -> dict:
+    runner = _runner(request)
+    session = request.app.state.opcua_session_service
+
+    writable, detail = session.check_writable("actuator")
+    variable = None
+
+    reader = getattr(session, "_reader", None)
+    if reader is not None:
+        variable = reader.resolve_role_variable("actuator")
+
+    return {
+        "enabled": runner.writes_enabled,
+        "role": "actuator",
+        "variable": variable,
+        "writable": writable,
+        "detail": detail,
+    }
+
+
+@router.post(
+    "/writer",
+    response_model=WriterResponse,
+    responses=VALIDATION_ERRORS,
+    summary="Armar o desarmar la escritura al PLC",
+    description=(
+        "**Mientras no se arme, el ensayo no toca el PLC**: calcula el perfil y "
+        "lo publica, pero el actuador no se mueve. Armar es un paso aparte a "
+        "propósito, para que pulsar *Inicio* no mueva equipo por accidente.\n\n"
+        "Al armar se comprueba que haya sesión OPC UA, que el rol `actuator` "
+        "tenga una variable asignada y que el servidor la declare escribible. "
+        "Si algo falla se devuelve 400 y la escritura queda desarmada.\n\n"
+        "Se escribe sobre **la misma variable que se eligió en el paso 1**: la "
+        "que esté mapeada al rol `actuator` en ese momento.\n\n"
+        "No se puede armar ni desarmar con un ensayo en curso: cambiar quién "
+        "gobierna el actuador a mitad de camino dejaría un registro donde una "
+        "parte del escalón se aplicó y otra no."
+    ),
+)
+def set_writer(body: WriterRequest, request: Request) -> dict:
+    runner = _runner(request)
+    session = request.app.state.opcua_session_service
+
+    if runner.is_running():
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Hay un ensayo en curso. Deténlo antes de cambiar la escritura: "
+                "si no, una parte del escalón se aplicaría y otra no."
+            ),
+        )
+
+    if not body.enabled:
+        runner.set_writer(None)
+        return {
+            "enabled": False,
+            "role": "actuator",
+            "variable": None,
+            "writable": False,
+            "detail": "Escritura desarmada. El ensayo solo dibujará el perfil.",
+        }
+
+    writable, detail = session.check_writable("actuator")
+
+    if not writable:
+        runner.set_writer(None)
+        raise HTTPException(status_code=400, detail=detail)
+
+    reader = getattr(session, "_reader", None)
+    variable = reader.resolve_role_variable("actuator") if reader else None
+
+    runner.set_writer(session.make_writer("actuator"))
+
+    return {
+        "enabled": True,
+        "role": "actuator",
+        "variable": variable,
+        "writable": True,
+        "detail": (
+            f"Escritura armada sobre '{variable}'. El próximo ensayo va a mover "
+            "el actuador."
+        ),
+    }
+
+
+@router.post(
+    "/stop",
+    response_model=TestRunState,
+    summary="Detener el ensayo",
+    description=(
+        "Corta el ensayo en curso y emite `test_stopped`. Es idempotente: sin "
+        "ensayo activo devuelve el estado tal cual, sin error.\n\n"
+        "Las muestras capturadas hasta el momento **se conservan**. Si alcanzan "
+        "para identificar, se puede llamar a `POST /api/identification/run`."
+    ),
+)
+def stop_test(request: Request) -> dict:
+    return _runner(request).stop()
+
+
+# --------------------------------------------------------------------------- #
+# Utilidades de conversión
+# --------------------------------------------------------------------------- #
 
 
 @router.get(

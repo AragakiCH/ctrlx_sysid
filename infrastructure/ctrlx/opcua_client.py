@@ -193,9 +193,62 @@ class CtrlxOpcUaClient:
             cur = found
         return cur
 
-    def read_value(self, node):
+    @staticmethod
+    def value_node(node):
+        """
+        Nodo donde vive realmente el dato.
+
+        En el Datalayer del ctrlX cada variable se expone como un objeto con un
+        hijo `2:Value`. En otros servidores la variable es el nodo mismo. Se
+        resuelve igual para leer y para escribir: si se escribiera en el objeto
+        padre cuando existe el hijo, el servidor rechaza la operación.
+        """
         try:
-            value_node = node.get_child(["2:Value"])
-            return value_node.get_value()
+            return node.get_child(["2:Value"])
         except Exception:
-            return node.get_value()
+            return node
+
+    def read_value(self, node):
+        return self.value_node(node).get_value()
+
+    def is_writable(self, node) -> bool:
+        """
+        True si el servidor declara el nodo como escribible.
+
+        Se consulta el AccessLevel en vez de intentar la escritura a ciegas:
+        así se puede avisar ANTES de arrancar un ensayo, en lugar de descubrir
+        a mitad de camino que el actuador no acepta comandos.
+        """
+        target = self.value_node(node)
+
+        try:
+            access = target.get_attribute(ua.AttributeIds.UserAccessLevel).Value.Value
+        except Exception:
+            try:
+                access = target.get_attribute(ua.AttributeIds.AccessLevel).Value.Value
+            except Exception:
+                # Sin información no se afirma que no se pueda: se deja intentar.
+                return True
+
+        try:
+            return bool(int(access) & ua.AccessLevel.CurrentWrite.mask)
+        except Exception:
+            # Algunas versiones exponen el bit directamente.
+            return bool(int(access) & 0b10)
+
+    def write_value(self, node, value: float) -> None:
+        """
+        Escribe respetando el tipo que declara el servidor.
+
+        Mandar un `float` de Python a una variable declarada como `Float`
+        (32 bits) hace que python-opcua envíe un Double y el servidor conteste
+        `BadTypeMismatch`. Por eso se construye el Variant con el tipo del nodo.
+        """
+        target = self.value_node(node)
+
+        try:
+            variant_type = target.get_data_type_as_variant_type()
+            target.set_value(ua.Variant(value, variant_type))
+        except Exception:
+            # Último recurso: dejar que la librería infiera el tipo.
+            target.set_value(value)

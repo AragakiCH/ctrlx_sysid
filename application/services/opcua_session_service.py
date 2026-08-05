@@ -309,6 +309,40 @@ class OpcUaSessionService:
             "programs": programs,
         }
 
+    # ------------------------------------------------------------------ #
+    # Escritura en el PLC
+    # ------------------------------------------------------------------ #
+
+    def check_writable(self, role: str = "actuator") -> tuple[bool, str]:
+        """¿Se puede escribir en la variable asignada a ese rol?"""
+        with self._lock:
+            reader = self._reader
+
+        if reader is None:
+            return False, "No hay sesión OPC UA activa."
+
+        return reader.can_write_role(role)
+
+    def make_writer(self, role: str = "actuator"):
+        """
+        Devuelve la función que escribe en la variable de ese rol.
+
+        Se resuelve el lector en cada llamada, no al crear el closure: si la
+        sesión se cierra y se vuelve a abrir, el closure viejo seguiría
+        apuntando a un lector muerto y las escrituras fallarían en silencio.
+        """
+
+        def writer(value: float) -> None:
+            with self._lock:
+                reader = self._reader
+
+            if reader is None:
+                raise RuntimeError("No hay sesión OPC UA activa.")
+
+            reader.write_role_value(role, value)
+
+        return writer
+
     def logout(self, clear_runtime: bool = True) -> dict:
         with self._lock:
             if self._reader is not None:

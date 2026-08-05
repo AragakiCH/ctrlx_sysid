@@ -229,6 +229,11 @@ def opcua_login(body: OpcUaLoginRequest, request: Request) -> dict:
 def update_mapping(body: OpcUaMappingRequest, request: Request) -> dict:
     session_service = request.app.state.opcua_session_service
 
+    # Se desarma la escritura: el rol `actuator` puede haber quedado apuntando
+    # a otra variable, y esa nueva puede no ser escribible. Rearmar es un acto
+    # deliberado, no algo que deba heredarse de un mapeo anterior.
+    request.app.state.test_runner_service.set_writer(None)
+
     try:
         return session_service.update_mapping(body.mapping.model_dump())
     except ValueError as exc:
@@ -248,6 +253,13 @@ def update_mapping(body: OpcUaMappingRequest, request: Request) -> dict:
 )
 def opcua_logout(request: Request) -> dict:
     session_service = request.app.state.opcua_session_service
+
+    # Un ensayo en marcha se corta antes de soltar la sesión: así el actuador
+    # vuelve a su valor inicial mientras todavía hay conexión para escribirlo.
+    runner = request.app.state.test_runner_service
+    runner.stop()
+    runner.set_writer(None)
+
     return session_service.logout(clear_runtime=True)
 
 

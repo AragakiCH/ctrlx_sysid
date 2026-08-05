@@ -27,54 +27,173 @@ function ensureWebSocket() {
 /**
  * Botón "Inicio" (paso 3): arranca un nuevo ensayo.
  *
- * MODO ACTUAL (temporal, mientras validamos el flujo del ensayo):
- * El chart se llena con el ESCALÓN IDEAL del paso 2 (no con los valores
- * reales del PLC). Cada tick se calcula el valor teórico:
- *   - t <  delay_s → step_from  (línea plana inicial)
- *   - t >= delay_s → step_to    (línea plana final)
- * y se anexa al sampleStore. Así el paso 3 muestra visualmente cómo
- * quedaría la señal si el PLC ejecutara exactamente el escalón configurado.
+ * El reloj lo lleva el BACKEND. Aquí solo se dispara y se espera:
  *
- * Cuando cableemos los datos reales del PLC, aquí cambiaremos el tick
- * para que empuje `valueForRole(data, "actuator")` desde handleSample
- * en vez de los valores sintéticos.
+ *   POST /api/test/start
+ *      -> WS test_started   : perfil completo del actuador (línea objetivo)
+ *      -> WS test_tick × N  : una por muestra, al periodo configurado
+ *      -> WS test_finished  : al completar duration_s
+ *
+ * Antes esto lo generaba un `setInterval` de 200 ms en el navegador. Se movió
+ * porque Chrome estrangula los timers de las pestañas en segundo plano y el
+ * escalón se aplicaría tarde o nunca — y porque cuando el backend escriba en
+ * el PLC tiene que ser ese mismo reloj el que mande.
  */
-function startCapture() {
-  const step = State.test?.step || {};
+async function startCapture() {
+  // El WS tiene que estar abierto ANTES del start: si no, se pierden los
+  // primeros ticks (y el test_started con el plan).
+  ensureWebSocket();
 
-  const duration = Number(step.duration_s) || 120;
-  const delay    = Number(step.delay_s)    || 10;
-  const stepFrom = Number(step.step_from);
-  const stepTo   = Number(step.step_to);
+  setStatus("Arrancando ensayo...", "running");
 
-  if (!Number.isFinite(stepFrom) || !Number.isFinite(stepTo)) {
-    setStatus(
-      "Falta configurar el escalón (paso 2): valor inicial y final del actuador.",
-      "error"
-    );
-    return;
+  try {
+    const response = await fetch(`${State.API_BASE}/api/test/start`, {
+      method: "POST"
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (response.status === 404) {
+      throw new Error(
+        "El backend no expone /api/test/start todavía. Reinicia el servidor."
+      );
+    }
+
+    if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+
+    // No se toca el estado aquí: lo hace onTestStarted cuando llegue el
+    // evento. Así la vista refleja lo que el backend realmente arrancó y no
+    // lo que creemos haber pedido.
+    return data;
+  } catch (err) {
+    console.error("No se pudo arrancar el ensayo:", err);
+    setStatus(err.message, "error");
+    return null;
+  }
+}
+
+
+/**
+ * Botón "Paro" (paso 3): aborta el ensayo en curso.
+ * NO cierra el WebSocket — sigue abierto para los live values del paso 3.
+ */
+async function stopCapture() {
+  try {
+    const response = await fetch(`${State.API_BASE}/api/test/stop`, {
+      method: "POST"
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.detail || `HTTP ${response.status}`);
+    }
+    // La UI la actualiza onTestStopped al recibir el evento.
+  } catch (err) {
+    console.error("No se pudo detener el ensayo:", err);
+    setStatus(`No se pudo detener el ensayo: ${err.message}`, "error");
+  }
+}
+
+
+/* ==================== ESCRITURA AL PLC ==================== */
+
+/**
+ * Interruptor "Escribir en el PLC".
+ *
+ * Armar es un paso deliberado: mientras no se arme, Inicio solo dibuja. Se
+ * escribe siempre sobre la variable que esté mapeada al rol `actuator` en el
+ * paso 1 — la que el usuario haya elegido.
+ */
+async function toggleWriter() {
+  const chk = document.getElementById("chkWriter");
+  const enabled = !!chk?.checked;
+
+  try {
+    const response = await fetch(`${State.API_BASE}/api/test/writer`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ enabled })
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+
+    renderWriterState(data);
+    setStatus(data.detail, enabled ? "warn" : "ok");
+  } catch (err) {
+    // El backend rechazó el armado: la casilla no puede quedar marcada
+    // sugiriendo que se va a escribir cuando no es así.
+    if (chk) chk.checked = false;
+    renderWriterState({ enabled: false, writable: false, detail: err.message });
+    setStatus(`No se pudo armar la escritura: ${err.message}`, "error");
+  }
+}
+
+
+/** Pinta el estado del interruptor a partir de la respuesta del backend. */
+function renderWriterState(data) {
+  const chk   = document.getElementById("chkWriter");
+  const badge = document.getElementById("writerBadge");
+  const hint  = document.getElementById("writerHint");
+  const card  = document.getElementById("writerCard");
+
+  const enabled = !!data?.enabled;
+
+  if (chk) chk.checked = enabled;
+  if (card) card.classList.toggle("armed", enabled);
+
+  if (badge) {
+    badge.textContent = enabled
+      ? `Escribiendo en ${data.variable || "?"}`
+      : "Solo dibujo";
   }
 
-  // Estado del ensayo — guardo también los parámetros del escalón
-  // para que el tick los tenga a mano sin volver a leer del DOM.
-  State.ensayo.running   = true;
-  State.ensayo.startedAt = Date.now();
-  State.ensayo.durationS = duration;
-  State.ensayo.delayS    = delay;
-  State.ensayo.stepFrom  = stepFrom;
-  State.ensayo.stepTo    = stepTo;
+  if (hint) {
+    hint.textContent = enabled
+      ? "El ensayo va a mover el actuador. Al terminar o al pulsar Paro se " +
+        "devuelve a su valor inicial."
+      : data?.detail ||
+        "Sin activar, el ensayo dibuja el escalón pero no toca el actuador.";
+  }
+}
 
-  // Buffer limpio y timer arrancando
+
+/** Consulta el estado al cargar la vista, para reflejar lo que ya haya armado. */
+async function refreshWriterState() {
+  try {
+    const response = await fetch(`${State.API_BASE}/api/test/writer`);
+    if (!response.ok) return;
+    renderWriterState(await response.json());
+  } catch (_) {
+    // Sin backend disponible se deja el estado por defecto (desarmado).
+  }
+}
+
+
+/* ==================== EVENTOS DEL ENSAYO ==================== */
+
+/**
+ * `test_started`: el backend arrancó y manda el perfil completo.
+ *
+ * El plan permite dibujar la línea objetivo entera de una vez, en lugar de
+ * irla descubriendo punto a punto: se ve a dónde va el ensayo desde el
+ * primer segundo.
+ */
+function onTestStarted(data) {
+  const plan = data?.plan || null;
+
+  State.ensayo.running   = true;
+  State.ensayo.plan      = plan;
+  State.ensayo.durationS = Number(plan?.duration_s) || Number(data?.duration_s) || 120;
+  State.ensayo.elapsedS  = 0;
+  State.ensayo.phase     = data?.phase || null;
+
   resetSampleStore();
   setTextareaValues("manualTime", [], 2);
   setTextareaValues("manualAct",  [], 3);
   setTextareaValues("manualSen",  [], 3);
 
-  if (State.ensayo.timerId) clearInterval(State.ensayo.timerId);
-  State.ensayo.timerId = setInterval(tickEnsayo, 200);
-  tickEnsayo();
-
-  // UI
   document.getElementById("btnStart").style.display   = "none";
   document.getElementById("btnStop").style.display    = "";
   document.getElementById("btnToIdent").style.display = "none";
@@ -86,53 +205,158 @@ function startCapture() {
   }
 
   plotCapture();
-  ensureWebSocket();  // WS sigue abierto para live values y dropdowns
 
-  setStatus(`Ensayo en curso — ${duration} s de captura`, "running");
+  const unidad = plan?.unit || "";
+  setStatus(
+    `Ensayo en curso — ${State.ensayo.durationS} s · ` +
+      `${plan?.from_value ?? "?"} → ${plan?.to_value ?? "?"} ${unidad} ` +
+      `en t=${plan?.step_at_s ?? "?"} s`,
+    "running"
+  );
 }
 
 
 /**
- * Cada 200 ms mientras dure el ensayo:
- *   1. Calcula el valor IDEAL del actuador según el reloj interno
- *      (el chart del actuador es sintético, viene del paso 2).
- *   2. Toma el ÚLTIMO valor REAL del sensor y del setpoint (cacheado
- *      por handleSample en State.latestSample). Esto muestrea la señal
- *      del PLC a 200 ms — sample-and-hold del valor más reciente.
- *   3. Empuja actuador ideal + sensor real + setpoint real al buffer.
- *   4. Actualiza el contador y redibuja el chart.
- *   5. Si el tiempo alcanza durationS, dispara finishEnsayo.
+ * `test_tick`: una por muestra.
+ *
+ * El actuador es lo que el backend COMANDA (`actuator_cmd`); el sensor y el
+ * setpoint son el último valor REAL del PLC, cacheado por handleSample.
+ * Es un sample-and-hold: se muestrea la señal del PLC al ritmo del ensayo.
  */
-function tickEnsayo() {
-  if (!State.ensayo.running) return;
+function onTestTick(data) {
+  if (!data) return;
 
-  const elapsed = (Date.now() - State.ensayo.startedAt) / 1000;
+  State.ensayo.running  = true;
+  State.ensayo.elapsedS = Number(data.elapsed_s) || 0;
+  State.ensayo.phase    = data.phase || null;
 
-  // Valor IDEAL del actuador (sintético)
-  const ideal = elapsed < State.ensayo.delayS
-    ? State.ensayo.stepFrom
-    : State.ensayo.stepTo;
-
-  // Último valor REAL del sensor y setpoint (cacheado por handleSample)
   const latest = State.latestSample || {};
-
   const s = State.sampleStore;
-  s.time.push(elapsed);
-  s.actuator_ma.push(ideal);
-  s.actuator_pct.push(null);
-  s.sensor_ma.push(latest.sensorMa);         // ← REAL del PLC
-  s.sensor_pct.push(latest.sensorPct);       // ← REAL del PLC
-  s.setpoint_ma.push(latest.setpointMa);     // ← REAL del PLC
-  s.setpoint_pct.push(latest.setpointPct);   // ← REAL del PLC
 
-  // Contador
+  s.time.push(State.ensayo.elapsedS);
+
+  // Comandado por el backend. `actuator_pct` ya no va en null: antes el
+  // actuador desaparecía del chart al cambiar la vista a porcentaje.
+  s.actuator_ma.push(pickNumber(data.actuator_cmd));
+  s.actuator_pct.push(pickNumber(data.actuator_cmd_pct));
+
+  // Leído del PLC
+  s.sensor_ma.push(latest.sensorMa);
+  s.sensor_pct.push(latest.sensorPct);
+  s.setpoint_ma.push(latest.setpointMa);
+  s.setpoint_pct.push(latest.setpointPct);
+
   const counter = document.getElementById("ensayoCounter");
-  if (counter) counter.textContent = `${elapsed.toFixed(1)} s`;
+  if (counter) counter.textContent = `${State.ensayo.elapsedS.toFixed(1)} s`;
 
   plotCapture();
   fillManualTextareas();
+}
 
-  if (elapsed >= State.ensayo.durationS) finishEnsayo();
+
+/** `test_finished`: el ensayo completó su duración. */
+function onTestFinished(data) {
+  State.ensayo.running = false;
+
+  const box = document.getElementById("ensayoTimerBox");
+  if (box) box.style.display = "none";
+
+  document.getElementById("btnStop").style.display  = "none";
+  document.getElementById("btnStart").style.display = "";
+  document.getElementById("btnIdent").style.display = "";
+
+  plotCapture();
+
+  setStatus(
+    `Ensayo completado (${State.ensayo.durationS} s, ` +
+      `${State.sampleStore.time.length} muestras). ` +
+      `Presiona "Identificar" para procesar.`,
+    "ok"
+  );
+}
+
+
+/** `test_stopped`: alguien lo cortó antes de tiempo. */
+function onTestStopped(data) {
+  State.ensayo.running = false;
+
+  const box = document.getElementById("ensayoTimerBox");
+  if (box) box.style.display = "none";
+
+  document.getElementById("btnStop").style.display  = "none";
+  document.getElementById("btnStart").style.display = "";
+
+  // Las muestras capturadas se conservan: si alcanzan, se puede identificar.
+  if (State.sampleStore.time.length) {
+    document.getElementById("btnIdent").style.display = "";
+  }
+
+  plotCapture();
+
+  setStatus(
+    `Ensayo detenido a los ${(Number(data?.elapsed_s) || 0).toFixed(1)} s ` +
+      `(${State.sampleStore.time.length} muestras capturadas)`,
+    "error"
+  );
+}
+
+
+/**
+ * `test_aborted`: se perdió el control del actuador.
+ *
+ * El backend cortó el ensayo tras varias escrituras fallidas seguidas. Los
+ * datos capturados hasta ese punto NO sirven para identificar: a partir del
+ * primer fallo la entrada real dejó de seguir al perfil, así que el modelo
+ * saldría de una entrada que nunca se aplicó.
+ */
+function onTestAborted(data) {
+  State.ensayo.running = false;
+
+  const box = document.getElementById("ensayoTimerBox");
+  if (box) box.style.display = "none";
+
+  document.getElementById("btnStop").style.display  = "none";
+  document.getElementById("btnStart").style.display = "";
+  // Se deja oculto a propósito: identificar sobre esto daría un modelo falso.
+  document.getElementById("btnIdent").style.display = "none";
+
+  plotCapture();
+  refreshWriterState();
+
+  setStatus(
+    `Ensayo abortado: ${data?.abort_reason || "se perdió el control del actuador"}. ` +
+      `Los datos capturados no sirven para identificar. Revisa la conexión con ` +
+      `el PLC y repite el ensayo.`,
+    "error"
+  );
+}
+
+
+/**
+ * `test_state`: respuesta a `get_test_state`, y también lo primero que manda
+ * el backend al conectar si YA hay un ensayo corriendo.
+ *
+ * Sirve para engancharse a un ensayo en marcha tras recargar la página: se
+ * recupera el plan y la vista vuelve a su sitio sin esperar al próximo tick.
+ * Las muestras anteriores a la recarga se perdieron (vivían en el navegador),
+ * pero el backend sí las tiene en su buffer y la identificación las usa.
+ */
+function onTestState(data) {
+  if (!data) return;
+
+  if (!data.running) {
+    State.ensayo.running = false;
+    return;
+  }
+
+  onTestStarted(data);
+  State.ensayo.elapsedS = Number(data.elapsed_s) || 0;
+
+  setStatus(
+    `Reenganchado a un ensayo en curso (${State.ensayo.elapsedS.toFixed(1)} s ` +
+      `de ${State.ensayo.durationS} s)`,
+    "running"
+  );
 }
 
 
@@ -152,54 +376,6 @@ function fillManualTextareas() {
   setTextareaValues("manualTime", s.time,    2);
   setTextareaValues("manualAct",  actuator,  3);
   setTextareaValues("manualSen",  sensor,    3);
-}
-
-
-/**
- * Se dispara automáticamente cuando el contador alcanza durationS.
- * Congela el chart, esconde el contador y habilita "Identificar".
- */
-function finishEnsayo() {
-  State.ensayo.running = false;
-  if (State.ensayo.timerId) {
-    clearInterval(State.ensayo.timerId);
-    State.ensayo.timerId = null;
-  }
-
-  // El contador desaparece al finalizar (pedido explícito).
-  const box = document.getElementById("ensayoTimerBox");
-  if (box) box.style.display = "none";
-
-  document.getElementById("btnStop").style.display  = "none";
-  document.getElementById("btnStart").style.display = "";
-  document.getElementById("btnIdent").style.display = "";
-
-  setStatus(
-    `Ensayo completado (${State.ensayo.durationS} s). Presiona "Identificar" para procesar.`,
-    "ok"
-  );
-}
-
-
-/**
- * Botón "Paro" (paso 3): aborta el ensayo en curso.
- * NO cierra el WebSocket — sigue abierto para los live values y
- * los dropdowns del paso 1.
- */
-function stopCapture() {
-  State.ensayo.running = false;
-  if (State.ensayo.timerId) {
-    clearInterval(State.ensayo.timerId);
-    State.ensayo.timerId = null;
-  }
-
-  document.getElementById("btnStop").style.display  = "none";
-  document.getElementById("btnStart").style.display = "";
-
-  const box = document.getElementById("ensayoTimerBox");
-  if (box) box.style.display = "none";
-
-  setStatus("Ensayo detenido por el usuario", "error");
 }
 
 
@@ -290,6 +466,9 @@ function connectWebSocket() {
     sendWsMessage({ type: "ping" });
     sendWsMessage({ type: "get_latest" });
     sendWsMessage({ type: "get_latest_identification" });
+    // Por si se recargó la página con un ensayo en marcha: el backend
+    // responde con el estado y el plan, y la vista se reengancha.
+    sendWsMessage({ type: "get_test_state" });
   };
 
   ws.onmessage = (event) => {
@@ -350,6 +529,31 @@ function handleWsMessage(msg) {
       handleIdentificationResult(msg.data || {});
       break;
 
+    // ---- Ensayo (el reloj lo lleva el backend) ----
+    case "test_started":
+      onTestStarted(msg.data || {});
+      break;
+
+    case "test_tick":
+      onTestTick(msg.data || {});
+      break;
+
+    case "test_finished":
+      onTestFinished(msg.data || {});
+      break;
+
+    case "test_stopped":
+      onTestStopped(msg.data || {});
+      break;
+
+    case "test_aborted":
+      onTestAborted(msg.data || {});
+      break;
+
+    case "test_state":
+      onTestState(msg.data);
+      break;
+
     case "error":
       console.error("Error WS:", msg);
       setStatus(msg.message || "Error recibido por WebSocket", "error");
@@ -368,13 +572,12 @@ function handleWsMessage(msg) {
  *   1. Sincronizar mapping y poblar dropdowns del paso 1 (siempre).
  *   2. Actualizar los live values del paso 3 (siempre).
  *
- * NO toca el sampleStore ni redibuja el chart. En esta versión el chart
- * del paso 3 se alimenta 100% del escalón IDEAL configurado en paso 2,
- * generado punto a punto por tickEnsayo(). Los datos reales del PLC solo
- * se usan para los indicadores en vivo (valAct/valSP/valSensor).
+ * NO toca el sampleStore ni redibuja el chart: de eso se encarga onTestTick,
+ * al ritmo que marca el backend. Aquí solo se cachea la última muestra, que
+ * es lo que ese tick lee para el sensor y el setpoint (sample-and-hold).
  *
- * Cuando cableemos la señal real al chart, aquí se agregará el push al
- * sampleStore condicionado a State.ensayo.running.
+ * Los samples llegan siempre, haya o no ensayo, porque los live values del
+ * paso 3 y los dropdowns del paso 1 tienen que funcionar igual.
  */
 function handleSample(data) {
   // 1. Mapping y dropdowns (siempre)

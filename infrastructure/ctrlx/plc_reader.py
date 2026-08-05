@@ -54,6 +54,21 @@ class PLCReader:
         self._opc = CtrlxOpcUaClient(url=url, user=user, password=password)
         self._repo = NodeRepository(self._opc)
 
+        # Nodo del programa, vigente mientras haya conexión. Lo publica el hilo
+        # de lectura para que las escrituras no tengan que volver a navegar el
+        # árbol desde la raíz en cada tick.
+        self._program_node = None
+
+        # Serializa TODO el tráfico OPC UA. La lectura corre en este hilo y las
+        # escrituras llegan desde el hilo del ensayo; comparten un solo socket,
+        # y sin el lock las peticiones se intercalarían y el servidor
+        # respondería a destiempo.
+        self._io_lock = threading.RLock()
+
+        # Cache nombre -> nodo. Buscar el hijo recorriendo todo el programa en
+        # cada escritura costaría un browse completo cada 200 ms.
+        self._node_cache: dict[str, Any] = {}
+
     # ------------------------------------------------------------------ #
     # Resolución de señales
     # ------------------------------------------------------------------ #
@@ -100,7 +115,9 @@ class PLCReader:
     # ------------------------------------------------------------------ #
 
     def _build_sample(self, plc_prg_node) -> dict:
-        raw_values = self._repo.read_program_values(plc_prg_node)
+        # Bajo el lock: comparte socket con las escrituras del ensayo.
+        with self._io_lock:
+            raw_values = self._repo.read_program_values(plc_prg_node)
         effective_mapping = self._resolve_effective_mapping(raw_values)
 
         sample: dict[str, Any] = {
@@ -134,6 +151,107 @@ class PLCReader:
 
     def set_mapping(self, mapping: Optional[dict[str, Optional[str]]]) -> None:
         self.mapping = {role: (mapping or {}).get(role) for role in SIGNAL_ROLES}
+        # Los nodos cacheados corresponden al mapeo anterior.
+        with self._io_lock:
+            self._node_cache.clear()
+
+    # ------------------------------------------------------------------ #
+    # Escritura
+    # ------------------------------------------------------------------ #
+
+    def _resolve_node(self, variable_name: str):
+        """Nodo de una variable, con cache. Debe llamarse con el lock tomado."""
+        if not variable_name:
+            return None
+
+        key = normalize_name(variable_name)
+        if key in self._node_cache:
+            return self._node_cache[key]
+
+        if self._program_node is None:
+            return None
+
+        node = self._repo.find_variable_node(self._program_node, variable_name)
+        if node is not None:
+            self._node_cache[key] = node
+
+        return node
+
+    def resolve_role_variable(self, role: str) -> Optional[str]:
+        """Nombre de la variable asignada a un rol, resolviendo alias si hace falta."""
+        name = self.mapping.get(role)
+        if name:
+            return name
+
+        # Sin mapeo explícito hay que mirar qué variables existen de verdad.
+        with self._io_lock:
+            if self._program_node is None:
+                return None
+            names = list(self._repo.read_program_values(self._program_node).keys())
+
+        return resolve_mapping(self.mapping, names).get(role)
+
+    def can_write_role(self, role: str) -> tuple[bool, str]:
+        """
+        Comprueba si el rol se puede escribir. Devuelve (ok, motivo).
+
+        Se consulta antes de armar la escritura para poder avisar en la vista,
+        en lugar de descubrir a mitad del ensayo que el actuador no obedece.
+        """
+        if not self.is_running:
+            return False, "El lector del PLC no está conectado."
+
+        variable_name = self.resolve_role_variable(role)
+        if not variable_name:
+            return False, f"No hay ninguna variable asignada al rol '{role}'."
+
+        with self._io_lock:
+            if self._program_node is None:
+                return False, "Todavía no se resolvió el programa en el PLC."
+
+            node = self._resolve_node(variable_name)
+            if node is None:
+                return False, (
+                    f"La variable '{variable_name}' no existe en el programa "
+                    f"'{self.program_name}'."
+                )
+
+            try:
+                writable = self._opc.is_writable(node)
+            except Exception as exc:
+                return False, f"No se pudo consultar los permisos de '{variable_name}': {exc}"
+
+        if not writable:
+            return False, (
+                f"El servidor OPC UA declara '{variable_name}' como solo lectura. "
+                "En el ctrlX suele pasar cuando la variable la escribe el propio "
+                "programa PLC: hay que exponer una variable de comando aparte."
+            )
+
+        return True, f"'{variable_name}' es escribible."
+
+    def write_role_value(self, role: str, value: float) -> None:
+        """
+        Escribe un valor en la variable asignada a un rol.
+
+        Lanza excepción si algo falla: quien llama decide si eso aborta el
+        ensayo. No se reintenta aquí para no tapar un problema persistente.
+        """
+        variable_name = self.resolve_role_variable(role)
+        if not variable_name:
+            raise RuntimeError(f"No hay ninguna variable asignada al rol '{role}'.")
+
+        with self._io_lock:
+            if self._program_node is None:
+                raise RuntimeError("Sin conexión con el PLC.")
+
+            node = self._resolve_node(variable_name)
+            if node is None:
+                raise RuntimeError(
+                    f"La variable '{variable_name}' no existe en el programa."
+                )
+
+            self._opc.write_value(node, value)
 
     # ------------------------------------------------------------------ #
     # Ciclo de vida
@@ -154,6 +272,13 @@ class PLCReader:
                         f"No se encontró el programa '{self.program_name}' dentro de 'sym'."
                     )
 
+                # Se publica para que las escrituras del ensayo lo usen sin
+                # volver a navegar el árbol. El cache se descarta: tras una
+                # reconexión los nodos viejos apuntan a una sesión muerta.
+                with self._io_lock:
+                    self._program_node = program_node
+                    self._node_cache.clear()
+
                 while not self._stop:
                     sample = self._build_sample(program_node)
 
@@ -171,6 +296,13 @@ class PLCReader:
                 backoff = min(backoff * 2.0, max_backoff)
 
             finally:
+                # Se invalida ANTES de desconectar: si no, una escritura podría
+                # colarse con un nodo que ya apunta a una sesión cerrada y
+                # fallar con un error incomprensible.
+                with self._io_lock:
+                    self._program_node = None
+                    self._node_cache.clear()
+
                 self._opc.disconnect()
 
     def start(self) -> None:
