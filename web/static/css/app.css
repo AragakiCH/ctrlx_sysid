@@ -705,8 +705,8 @@ select.input-error:focus {
 }
 
 .ensayo-icon {
-  font-size: 16px;
-  color: var(--text-muted);
+  font-size: 15px;
+  color: var(--text3);
 }
 .ensayo-timer.running .ensayo-icon {
   color: var(--accent);
@@ -740,6 +740,22 @@ select.input-error:focus {
 }
 .ensayo-timer.running .ensayo-val { color: var(--accent); }
 .ensayo-timer.done    .ensayo-val { color: var(--success); }
+
+/* Duración total configurada en el paso 2. Va pegada al contador y en pequeño:
+   el dato que cambia es el transcurrido; el total es solo la referencia contra
+   la que leerlo. `margin-left: auto` ya lo tiene .ensayo-val, así que este
+   queda a su derecha sin separarse. */
+.ensayo-total {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text3);
+  font-variant-numeric: tabular-nums;
+  align-self: flex-end;
+  padding-bottom: 3px;
+}
+.ensayo-timer.running .ensayo-total { color: var(--accent-text); opacity: 0.8; }
+.ensayo-timer.done    .ensayo-total { color: var(--success); opacity: 0.8; }
 
 
 /* ==================== 12. LIVE VALUES (PASO 3) ==================== */
@@ -1352,4 +1368,140 @@ hr {
   font-size: 11px;
   line-height: 1.5;
   color: var(--text2);
+}
+
+/* ==================== 27. LECTURA EN VIVO DE CADA VARIABLE ==================== */
+/* Bajo cada <select> del paso 1: qué está leyendo esa variable AHORA.
+   Sirve para cazar el caso de elegir una variable que el programa PLC declara
+   pero nunca asigna — se queda clavada en su valor inicial y parece que el
+   mapeo no funcionara. */
+
+.var-live {
+  margin-top: 5px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text3);
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Lleva demasiadas lecturas sin cambiar: casi siempre es la variable
+   equivocada. Se avisa sin bloquear nada, porque también puede ser una señal
+   legítimamente en reposo. */
+.var-live.estatica {
+  color: var(--warning);
+}
+
+.var-live.estatica::after {
+  content: " · sin cambios";
+  opacity: 0.75;
+}
+
+/* ==================== 28. IMPORTACIÓN DE ENSAYOS ==================== */
+
+/* Banner permanente mientras el buffer contiene datos de archivo. Va pegado
+   bajo la topbar y no se puede cerrar sin salir del modo: que nunca haya
+   duda de si lo que se ve es el PLC en vivo o un archivo. */
+.import-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 28px;
+  background: var(--warning-bg);
+  border-bottom: 1px solid var(--warning-border);
+  color: var(--text);
+  font-size: 12.5px;
+  position: sticky;
+  top: 58px;            /* justo bajo la topbar */
+  z-index: 99;
+}
+
+.import-banner i { color: var(--warning); }
+.import-banner span { flex: 1; }
+.import-banner .btn-sm { padding: 4px 12px; font-size: 11.5px; }
+
+/* Modal de mapeo */
+.import-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 25, 41, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 300;
+}
+
+.import-modal {
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 22px 24px;
+  width: min(680px, 92vw);
+  max-height: 88vh;
+  overflow-y: auto;
+}
+
+.import-modal h3 { font-size: 15px; margin-bottom: 4px; }
+
+.imp-meta {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text3);
+  margin-bottom: 14px;
+}
+
+.imp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-bottom: 16px;
+}
+
+.imp-table th,
+.imp-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.imp-table th {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text3);
+}
+
+.imp-name { font-family: var(--mono); font-size: 11.5px; }
+.imp-warn { color: var(--warning); font-weight: 600; }
+
+.imp-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 16px;
+  margin-bottom: 18px;
+}
+
+.imp-grid label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text2);
+  margin-bottom: 4px;
+}
+
+.imp-grid select {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  background: var(--surface);
+}
+
+.imp-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }

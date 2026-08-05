@@ -34,6 +34,54 @@ class RealtimeService:
         self._buffer: Deque[dict] = deque(maxlen=max_buffer_size)
         self._scale_provider = scale_provider
 
+        # Fuente actual del buffer. En "imported" las muestras del PLC se
+        # ignoran: un buffer mezcla de archivo y tiempo real no describe
+        # ningún ensayo y la identificación saldría de una serie quimérica.
+        self._source: str = "realtime"
+        self._import_info: Optional[dict] = None
+
+    # ------------------------------------------------------------------ #
+    # Fuente de datos (tiempo real vs importado)
+    # ------------------------------------------------------------------ #
+
+    @property
+    def source(self) -> str:
+        return self._source
+
+    @property
+    def import_info(self) -> Optional[dict]:
+        return self._import_info
+
+    def load_imported(self, samples: list[dict], info: dict) -> int:
+        """
+        Reemplaza el buffer por muestras de archivo y activa el modo importado.
+
+        Si el archivo trae más muestras que `max_buffer_size`, el deque
+        descartaría el INICIO (donde suele estar la línea base del escalón).
+        Por eso se recrea el buffer con capacidad suficiente.
+        """
+        if len(samples) > self._buffer.maxlen:
+            self._buffer = deque(maxlen=len(samples))
+
+        self._buffer.clear()
+        for sample in samples:
+            self._buffer.append(self.normalize_sample(sample))
+
+        self._source = "imported"
+        self._import_info = dict(info)
+
+        return len(samples)
+
+    def restore_realtime(self) -> None:
+        """Vuelve al flujo del PLC. Limpia el buffer: eran datos de archivo."""
+        self._buffer = deque(maxlen=self.max_buffer_size)
+        self._source = "realtime"
+        self._import_info = None
+
+    @property
+    def accepts_realtime(self) -> bool:
+        return self._source == "realtime"
+
     def set_scale_provider(self, provider: Optional[Callable[[str], str]]) -> None:
         """Inyecta de dónde sacar la escala de cada rol (normalmente TestConfigService)."""
         self._scale_provider = provider
@@ -96,6 +144,11 @@ class RealtimeService:
 
     def add_sample(self, sample: dict) -> None:
         if not isinstance(sample, dict):
+            return
+
+        # En modo importado el buffer pertenece al archivo: una muestra del
+        # PLC colada al final desalinearía el tiempo y contaminaría la serie.
+        if self._source != "realtime":
             return
 
         normalized_sample = self.normalize_sample(sample)

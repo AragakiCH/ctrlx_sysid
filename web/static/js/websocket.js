@@ -198,8 +198,7 @@ function onTestStarted(data) {
   document.getElementById("btnStop").style.display    = "";
   document.getElementById("btnToIdent").style.display = "none";
 
-  const box = document.getElementById("ensayoTimerBox");
-  if (box) box.className = "ensayo-timer running";
+  showEnsayoTimer("running", 0);
 
   plotCapture();
 
@@ -232,22 +231,63 @@ function onTestTick(data) {
 
   s.time.push(State.ensayo.elapsedS);
 
-  // Comandado por el backend. `actuator_pct` ya no va en null: antes el
-  // actuador desaparecía del chart al cambiar la vista a porcentaje.
-  s.actuator_ma.push(pickNumber(data.actuator_cmd));
-  s.actuator_pct.push(pickNumber(data.actuator_cmd_pct));
-
-  // Leído del PLC
+  // LEÍDO del PLC — la variable que el usuario mapeó a cada rol.
+  // Es lo que se grafica y lo que la identificación consume de verdad.
+  s.actuator_ma.push(latest.actuatorMa);
+  s.actuator_pct.push(latest.actuatorPct);
   s.sensor_ma.push(latest.sensorMa);
   s.sensor_pct.push(latest.sensorPct);
   s.setpoint_ma.push(latest.setpointMa);
   s.setpoint_pct.push(latest.setpointPct);
 
-  const counter = document.getElementById("ensayoCounter");
-  if (counter) counter.textContent = `${State.ensayo.elapsedS.toFixed(1)} s`;
+  // COMANDADO por el backend. Va aparte: si se guardara en `actuator_ma` el
+  // gráfico mostraría siempre el escalón ideal y cambiar la variable mapeada
+  // no tendría ningún efecto visible — que es justo lo que pasaba antes.
+  s.actuator_cmd_ma.push(pickNumber(data.actuator_cmd));
+  s.actuator_cmd_pct.push(pickNumber(data.actuator_cmd_pct));
+
+  showEnsayoTimer("running", State.ensayo.elapsedS);
 
   plotCapture();
   fillManualTextareas();
+}
+
+
+/* ==================== CONTADOR FLOTANTE ==================== */
+
+/**
+ * Pinta la notificación "Tiempo de ensayo": transcurrido y duración total.
+ *
+ * La visibilidad se maneja SOLO con clases (`running` / `done`). El CSS la
+ * resuelve con opacity + transform; tocar `display` desde aquí cortaría la
+ * transición de entrada y salida.
+ *
+ * @param {"running"|"done"|"hidden"} estado
+ * @param {number} elapsed segundos transcurridos
+ */
+function showEnsayoTimer(estado, elapsed) {
+  const box     = document.getElementById("ensayoTimerBox");
+  const counter = document.getElementById("ensayoCounter");
+  const total   = document.getElementById("ensayoTotal");
+
+  if (box) {
+    box.className =
+      estado === "hidden" ? "ensayo-timer" : `ensayo-timer ${estado}`;
+  }
+
+  if (counter) {
+    counter.textContent =
+      Number.isFinite(elapsed) ? `${Number(elapsed).toFixed(1)} s` : "—";
+  }
+
+  // La duración es la configurada en el paso 2 (o la del plan que mandó el
+  // backend al arrancar, que es la misma). Sin ella no hay contra qué leer
+  // el transcurrido.
+  if (total) {
+    const duracion =
+      Number(State.ensayo?.durationS) || Number(State.test?.step?.duration_s) || null;
+    total.textContent = duracion ? `/ ${Number(duracion).toFixed(0)} s` : "";
+  }
 }
 
 
@@ -255,8 +295,8 @@ function onTestTick(data) {
 function onTestFinished(data) {
   State.ensayo.running = false;
 
-  const box = document.getElementById("ensayoTimerBox");
-  if (box) box.style.display = "none";
+  // Se oculta al terminar, como pide el diseño.
+  showEnsayoTimer("hidden", State.ensayo.elapsedS);
 
   document.getElementById("btnStop").style.display  = "none";
   document.getElementById("btnStart").style.display = "";
@@ -277,8 +317,7 @@ function onTestFinished(data) {
 function onTestStopped(data) {
   State.ensayo.running = false;
 
-  const box = document.getElementById("ensayoTimerBox");
-  if (box) box.style.display = "none";
+  showEnsayoTimer("hidden", Number(data?.elapsed_s) || 0);
 
   document.getElementById("btnStop").style.display  = "none";
   document.getElementById("btnStart").style.display = "";
@@ -309,8 +348,7 @@ function onTestStopped(data) {
 function onTestAborted(data) {
   State.ensayo.running = false;
 
-  const box = document.getElementById("ensayoTimerBox");
-  if (box) box.style.display = "none";
+  showEnsayoTimer("hidden", Number(data?.elapsed_s) || 0);
 
   document.getElementById("btnStop").style.display  = "none";
   document.getElementById("btnStart").style.display = "";
@@ -583,7 +621,7 @@ function handleSample(data) {
   }
   populateVariableDropdowns(data);
 
-  // 2. Cachear la última muestra completa — la usa tickEnsayo para
+  // 2. Cachear la última muestra completa — la usa onTestTick para
   //    llenar el chart del sensor con el valor real más reciente.
   const latest = State.latestSample;
   latest.actuatorMa  = valueForRole(data, "actuator");
@@ -595,6 +633,79 @@ function handleSample(data) {
 
   // 3. Live values (siempre)
   updateLiveValues(latest);
+  updateVariablePreview(data);
+}
+
+
+/**
+ * Muestra bajo cada <select> del paso 1 qué está leyendo esa variable ahora.
+ *
+ * Sin esto no hay forma de notar que se eligió una variable que vale siempre
+ * lo mismo —una declarada pero que el programa PLC nunca asigna, por ejemplo—
+ * y el síntoma se confunde con "el mapeo no funciona".
+ *
+ * El valor sale de `raw`, que trae TODAS las variables del programa con su
+ * nombre real. Así el número corresponde exactamente a la variable elegida.
+ */
+function updateVariablePreview(data) {
+  const raw = data?.raw || {};
+  const mapping = data?.mapping || State.mapping || {};
+
+  const targets = [
+    { id: "liveAct", role: "actuator" },
+    { id: "liveSen", role: "sensor" },
+    { id: "liveSP",  role: "setpoint" }
+  ];
+
+  targets.forEach(({ id, role }) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+
+    const nombre = mapping[role];
+
+    if (!nombre) {
+      el.textContent = "— sin asignar —";
+      el.classList.remove("estatica");
+      return;
+    }
+
+    const valor = pickNumber(raw[nombre]);
+    el.textContent =
+      valor === null ? `${nombre}: sin lectura` : `${nombre} = ${valor.toFixed(3)}`;
+
+    // Se marca la que lleva un rato sin moverse: casi siempre es señal de que
+    // se eligió la variable equivocada.
+    el.classList.toggle("estatica", registrarYDetectarEstatica(id, valor));
+  });
+}
+
+
+/**
+ * ¿Lleva esta variable muchas lecturas seguidas con el mismo valor?
+ *
+ * No basta con comparar contra la lectura anterior: una señal lenta cambia
+ * poco entre muestras consecutivas. Se exige una racha larga para no marcar
+ * como sospechosa una señal que simplemente está en régimen permanente.
+ */
+const RACHA_ESTATICA = 50;   // ~10 s a 0.2 s por muestra
+const _historial = {};
+
+function registrarYDetectarEstatica(id, valor) {
+  const h = (_historial[id] ||= { ultimo: null, repeticiones: 0 });
+
+  if (valor === null) {
+    h.repeticiones = 0;
+    return false;
+  }
+
+  if (h.ultimo !== null && Math.abs(valor - h.ultimo) < 1e-9) {
+    h.repeticiones += 1;
+  } else {
+    h.repeticiones = 0;
+  }
+
+  h.ultimo = valor;
+  return h.repeticiones >= RACHA_ESTATICA;
 }
 
 
@@ -640,12 +751,20 @@ function updateLiveValues(vals) {
 /* ==================== POBLACIÓN DE DROPDOWNS DE VARIABLES ==================== */
 
 /**
- * Al recibir el primer sample con `raw`, llena los <select> de variables
- * del paso 1 con todas las llaves del programa. Pre-selecciona cada
- * dropdown con lo que el backend ya tiene mapeado (`sample.mapping`).
+ * Mantiene los <select> del paso 1 alineados con la realidad del backend.
  *
- * Se ejecuta una sola vez: en cuanto los selects tienen opciones reales,
- * ya no se toca (así no pisa cambios manuales del usuario).
+ * Cada muestra trae `mapping`: el mapeo EFECTIVO con el que el PLCReader está
+ * leyendo en ese instante. Este mapeo es la fuente de verdad y el desplegable
+ * tiene que reflejarlo siempre.
+ *
+ * Antes esto corría una sola vez, con la idea de "no pisar lo que eligió el
+ * usuario". El efecto era el contrario: el select se congelaba en la primera
+ * muestra y mentía en cuanto el mapeo cambiaba desde otro sitio —otra pestaña,
+ * Swagger, un re-login, o el propio backend resolviendo un alias distinto—.
+ * Se veía `rActuator` en pantalla mientras el backend leía `rSensor`.
+ *
+ * Para no pisar un cambio del usuario mientras viaja al backend se usa
+ * `State.mappingPending`, que `applyMappingChange` levanta durante el POST.
  */
 function populateVariableDropdowns(sample) {
   const raw = sample?.raw;
@@ -654,93 +773,59 @@ function populateVariableDropdowns(sample) {
   const keys = Object.keys(raw);
   if (!keys.length) return;
 
-  // ¿Ya se llenó? El placeholder inicial tiene value="", los reales no.
-  const first = document.getElementById("varAct");
-  if (!first || (first.options.length > 0 && first.options[0].value !== "")) return;
-
   const mapping = sample.mapping || {};
 
   const targets = [
-    { id: "varAct", role: "actuator" },
-    { id: "varSen", role: "sensor" },
-    { id: "varSP",  role: "setpoint" }
+    { id: "varAct", role: "actuator", opcional: false },
+    { id: "varSen", role: "sensor",   opcional: false },
+    { id: "varSP",  role: "setpoint", opcional: true  }
   ];
 
-  targets.forEach(({ id, role }) => {
+  targets.forEach(({ id, role, opcional }) => {
     const sel = document.getElementById(id);
     if (!sel) return;
 
-    // Para setpoint dejamos una opción "sin asignar" (es opcional)
-    const opts = role === "setpoint" ? [`<option value="">— sin asignar —</option>`] : [];
-    keys.forEach((k) => {
-      opts.push(`<option value="${escapeHtml(k)}">${escapeHtml(k)}</option>`);
-    });
-    sel.innerHTML = opts.join("");
+    // Las opciones se reconstruyen SOLO si cambió la lista de variables (por
+    // ejemplo al cambiar de programa). Rehacerlas en cada muestra cerraría el
+    // desplegable justo cuando el usuario lo tiene abierto.
+    const actuales = Array.from(sel.options)
+      .map((o) => o.value)
+      .filter((v) => v !== "");
 
-    const current = mapping[role];
-    if (current && keys.includes(current)) sel.value = current;
+    const mismasOpciones =
+      actuales.length === keys.length && actuales.every((v, i) => v === keys[i]);
+
+    if (!mismasOpciones) {
+      const previo = sel.value;
+
+      const opts = opcional ? [`<option value="">— sin asignar —</option>`] : [];
+      keys.forEach((k) => {
+        opts.push(`<option value="${escapeHtml(k)}">${escapeHtml(k)}</option>`);
+      });
+      sel.innerHTML = opts.join("");
+
+      // innerHTML resetea la selección al primer <option>.
+      if (previo && keys.includes(previo)) sel.value = previo;
+    }
+
+    // Hay un cambio del usuario viajando al backend: no se toca hasta saber
+    // si lo aceptó, o el select parpadearía al valor viejo.
+    if (State.mappingPending) return;
+
+    const real = mapping[role] || "";
+    const asignable = real === "" ? opcional : keys.includes(real);
+
+    if (asignable && sel.value !== real) sel.value = real;
   });
 }
 
 
 /* ==================== CAMBIO DE MAPEO EN CALIENTE ==================== */
-
-/**
- * Lee los <select> del paso 1 y manda el nuevo mapeo al backend
- * (POST /api/opcua/mapping). El backend reasigna qué variable lee para
- * cada rol y limpia su buffer, así que aquí también limpiamos el nuestro:
- * las muestras viejas se tomaron con otro mapeo.
- */
-async function applyMappingChange() {
-  const mapping = {
-    // time y signal_type no son editables en la UI: se conserva
-    // lo que el backend ya resolvió (alias por defecto o login).
-    time:        State.mapping.time        || null,
-    signal_type: State.mapping.signal_type || null,
-    actuator:    document.getElementById("varAct")?.value || null,
-    sensor:      document.getElementById("varSen")?.value || null,
-    setpoint:    document.getElementById("varSP")?.value  || null
-  };
-
-  setStatus("Aplicando nuevo mapeo de variables...", "running");
-
-  try {
-    const response = await fetch(`${State.API_BASE}/api/opcua/mapping`, {
-      method:  "POST",
-      headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ mapping })
-    });
-
-    const data = await response.json().catch(() => ({}));
-
-    if (!response.ok) {
-      throw new Error(data.detail || `HTTP ${response.status}`);
-    }
-
-    State.mapping = { ...State.mapping, ...(data.mapping || mapping) };
-
-    try {
-      localStorage.setItem("plcMapping", JSON.stringify(State.mapping));
-    } catch (_) {}
-
-    // El buffer viejo ya no es válido: se capturó con otras variables.
-    resetSampleStore();
-    clearLiveValues();
-    setTextareaValues("manualTime", [], 3);
-    setTextareaValues("manualAct",  [], 3);
-    setTextareaValues("manualSen",  [], 3);
-    // El chart del paso 3 se redibuja en el próximo Inicio; aquí no forzamos.
-
-    setStatus(
-      `Mapeo actualizado — u: ${mapping.actuator || "—"} · ` +
-        `y: ${mapping.sensor || "—"} · SP: ${mapping.setpoint || "—"}`,
-      "ok"
-    );
-  } catch (err) {
-    console.error("Error actualizando mapeo:", err);
-    setStatus(`No se pudo actualizar el mapeo: ${err.message}`, "error");
-  }
-}
+/* `applyMappingChange` vive en main.js. Aquí había una segunda definición que
+   quedaba SIEMPRE anulada, porque main.js se carga después y las declaraciones
+   de función de nivel superior se pisan entre sí. Dos versiones del mismo
+   nombre con comportamientos distintos: la que se leía al depurar no era la
+   que corría. Se eliminó y lo bueno que tenía se movió a main.js. */
 
 
 function writeLive(id, value) {

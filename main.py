@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.routes.health import router as health_router
 from api.routes.identification import router as identification_router
+from api.routes.import_data import router as import_router
 from api.routes.opcua import router as opcua_router
 from api.routes.simulation import router as test_router
 from application.services.identification_pipeline_service import IdentificationPipelineService
@@ -100,6 +101,14 @@ TAGS_METADATA = [
         "description": (
             "Resultados del motor de identificación. Se generan **automáticamente** "
             "cuando se detecta un escalón; no hay endpoint para dispararla a mano."
+        ),
+    },
+    {
+        "name": "Importación",
+        "description": (
+            "Ensayos desde archivo: trace de CODESYS, CSV tabular o Excel. "
+            "Mientras el modo importado está activo, las muestras del PLC se "
+            "**ignoran** para no mezclar fuentes."
         ),
     },
     {
@@ -300,6 +309,7 @@ app.state.last_step_index = None
 app.include_router(opcua_router)
 app.include_router(identification_router)
 app.include_router(test_router)
+app.include_router(import_router)
 app.include_router(health_router)
 
 @app.on_event("startup")

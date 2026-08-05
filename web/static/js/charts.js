@@ -113,9 +113,16 @@ function plotCapture() {
 
   const time = store.time;
 
-  // Actuador: chart siempre muestra el escalón SINTÉTICO (viene del paso 2).
-  // Los valores reales del PLC van al textarea via fillManualTextareas.
-  const actuator = store.actuator_ideal;
+  // Actuador: la variable que el PLC REPORTA en el rol `actuator`.
+  //
+  // Antes esto leía `store.actuator_ideal`, una clave que no existe en
+  // `sampleStore` y que nadie llenaba nunca: el gráfico dibujaba `undefined`
+  // en todos los puntos. Y aunque hubiera existido, mostrar el escalón ideal
+  // aquí hace que cambiar la variable mapeada no tenga ningún efecto visible
+  // y oculta justo lo que hay que ver: si el actuador obedeció.
+  //
+  // El escalón comandado se dibuja punteado detrás, vía buildPlanOverlay.
+  const actuator = type === "pct" ? store.actuator_pct : store.actuator_ma;
 
   // Sensor: chart muestra los valores REALES del PLC.
   const sensor = type === "pct" ? store.sensor_pct : store.sensor_ma;
@@ -131,9 +138,14 @@ function plotCapture() {
 /**
  * Línea objetivo del actuador: el perfil COMPLETO que mandó `test_started`.
  *
- * Se dibuja punteada y por debajo de lo capturado. Sirve para ver a dónde va
- * el ensayo desde el primer segundo, en vez de descubrirlo punto a punto, y
- * para notar de un vistazo si lo capturado se desvía del plan.
+ * Se dibuja punteada y por debajo de la señal capturada. La comparación entre
+ * las dos es el diagnóstico más útil de la vista:
+ *
+ *   punteada = lo que el backend COMANDA
+ *   sólida   = lo que el PLC REPORTA en la variable mapeada
+ *
+ * Si la sólida no sigue a la punteada, o la escritura no está armada, o el
+ * actuador saturó, o esa variable la pisa el propio programa del PLC.
  */
 function buildPlanOverlay(type) {
   const plan = State.ensayo?.plan;

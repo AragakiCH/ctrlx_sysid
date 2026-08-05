@@ -200,6 +200,24 @@ def convert(body: ConvertRequest) -> dict:
     }
 
 
+@router.get(
+    "/series",
+    summary="Serie completa del buffer",
+    description=(
+        "Arrays paralelos de tiempo, actuador, sensor y setpoint con TODO lo "
+        "que hay en el buffer (en vivo o importado). Con `percent=true` en "
+        "escala 0-100 %; si no, en la escala cruda.\n\n"
+        "Es lo que la vista usa para redibujar los gráficos tras importar un "
+        "archivo o al recargar la página."
+    ),
+)
+def get_series(
+    request: Request,
+    percent: bool = Query(False, description="Devolver en % de span"),
+) -> dict:
+    return request.app.state.realtime_service.get_series_payload(use_percent=percent)
+
+
 # --------------------------------------------------------------------------- #
 # Ejecución del ensayo
 # --------------------------------------------------------------------------- #

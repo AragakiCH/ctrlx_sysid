@@ -4,3 +4,5 @@ fastapi
 uvicorn[standard]
 cryptography
 jinja2
+python-multipart
+openpyxl

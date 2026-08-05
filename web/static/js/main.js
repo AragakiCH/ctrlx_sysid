@@ -59,6 +59,11 @@ document.addEventListener("DOMContentLoaded", () => {
   if (typeof ensureWebSocket === "function") {
     ensureWebSocket();
   }
+
+  // Si el backend quedó en modo importado (recarga de página), reflejarlo.
+  if (typeof refreshImportState === "function") {
+    refreshImportState();
+  }
 });
 
 
@@ -105,6 +110,9 @@ async function applyMappingChange() {
     signal_type: State.mapping.signal_type || null
   };
 
+  // Mientras el cambio viaja, `populateVariableDropdowns` no debe re-sincronizar
+  // los <select> con el mapeo viejo: se verían saltar al valor anterior.
+  State.mappingPending = true;
   setStatus("Actualizando mapeo de variables...", "running");
 
   try {
@@ -113,15 +121,30 @@ async function applyMappingChange() {
     // El backend devuelve el mapping efectivo (con los null resueltos vía alias).
     State.mapping = { ...State.mapping, ...(resp.mapping || mapping) };
 
-    // Aviso claro: el buffer y la identificación se descartaron.
+    try {
+      localStorage.setItem("plcMapping", JSON.stringify(State.mapping));
+    } catch (_) {}
+
+    // El buffer local se capturó leyendo OTRAS variables. Si no se limpia, la
+    // pantalla sigue mostrando los números viejos y da la impresión de que el
+    // cambio no surtió efecto.
+    resetSampleStore();
+    clearLiveValues();
+    if (typeof plotCapture === "function") plotCapture();
+
     setStatus(
-      "Mapeo actualizado. Buffer y última identificación descartados — " +
-        "espera a que llegue una nueva muestra.",
+      `Mapeo actualizado — u: ${mapping.actuator || "—"} · ` +
+        `y: ${mapping.sensor || "—"} · SP: ${mapping.setpoint || "—"}. ` +
+        `Buffer e identificación descartados.`,
       "ok"
     );
   } catch (err) {
     console.error("Error al cambiar mapping:", err);
     setStatus(`No se pudo cambiar el mapeo: ${err.message}`, "error");
+  } finally {
+    // Se libera pase lo que pase: si falló, la próxima muestra devuelve los
+    // <select> a lo que el backend realmente tiene.
+    State.mappingPending = false;
   }
 }
 

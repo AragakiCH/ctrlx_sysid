@@ -633,6 +633,54 @@
         }
       }
     },
+    "/api/test/series": {
+      "get": {
+        "tags": [
+          "Ensayo"
+        ],
+        "summary": "Serie completa del buffer",
+        "description": "Arrays paralelos de tiempo, actuador, sensor y setpoint con TODO lo que hay en el buffer (en vivo o importado). Con `percent=true` en escala 0-100 %; si no, en la escala cruda.\n\nEs lo que la vista usa para redibujar los gráficos tras importar un archivo o al recargar la página.",
+        "operationId": "get_series_api_test_series_get",
+        "parameters": [
+          {
+            "name": "percent",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Devolver en % de span",
+              "default": false,
+              "title": "Percent"
+            },
+            "description": "Devolver en % de span"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Series Api Test Series Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/test/plan": {
       "get": {
         "tags": [
@@ -903,6 +951,154 @@
         }
       }
     },
+    "/api/import/parse": {
+      "post": {
+        "tags": [
+          "Importación"
+        ],
+        "summary": "Subir y analizar un archivo de ensayo",
+        "description": "Acepta tres formatos, con detección automática:\n\n- **Trace de CODESYS / ctrlX** (`.trace.csv`): el export nativo del trace.\n- **CSV tabular**: encabezados en la primera fila, separador `,` o `;`.\n- **Excel** (`.xlsx`): primera hoja, misma estructura que el CSV.\n\nDevuelve las variables encontradas con resumen y preview —los nombres son los DEL ARCHIVO, no los roles— y un `token` para el paso siguiente. **No toca el buffer**: eso lo hace `/load` cuando el usuario ya decidió el mapeo.\n\nEl tiempo se normaliza a segundos (los traces vienen en ms) y el periodo de muestreo se calcula del propio archivo.",
+        "operationId": "parse_upload_api_import_parse_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_parse_upload_api_import_parse_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParseResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Archivo o mapeo inválido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api__schemas__opcua__ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/import/load": {
+      "post": {
+        "tags": [
+          "Importación"
+        ],
+        "summary": "Cargar el archivo al buffer con el mapeo elegido",
+        "description": "Convierte las series del archivo en muestras y **reemplaza el buffer** con ellas, activando el modo importado:\n\n- Las muestras del PLC se ignoran hasta `POST /clear`. Un buffer mezcla de archivo y tiempo real no describe ningún ensayo.\n- El **periodo de muestreo del ensayo pasa a ser el del archivo** (se actualiza en las condiciones de ensayo), para que las ventanas de identificación queden bien dimensionadas.\n- La escala elegida se aplica a los tres roles.\n\nDespués de esto, `POST /api/identification/run`, los gráficos y el PID funcionan exactamente igual que con datos en vivo.\n\nSi hay un ensayo del runner en curso, devuelve 400: primero detenerlo.",
+        "operationId": "load_dataset_api_import_load_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoadResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Archivo o mapeo inválido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api__schemas__opcua__ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/import/clear": {
+      "post": {
+        "tags": [
+          "Importación"
+        ],
+        "summary": "Salir del modo importado y volver a tiempo real",
+        "description": "Descarta los datos de archivo, limpia el buffer y vuelve a aceptar muestras del PLC. Idempotente.",
+        "operationId": "clear_import_api_import_clear_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/import/status": {
+      "get": {
+        "tags": [
+          "Importación"
+        ],
+        "summary": "¿El buffer es de archivo o de tiempo real?",
+        "description": "La vista lo consulta al cargar para mostrar (o no) el banner de modo importado.",
+        "operationId": "import_status_api_import_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "tags": [
@@ -972,6 +1168,20 @@
   },
   "components": {
     "schemas": {
+      "Body_parse_upload_api_import_parse_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_parse_upload_api_import_parse_post"
+      },
       "ConvertRequest": {
         "properties": {
           "value": {
@@ -1388,6 +1598,366 @@
         ],
         "title": "IdentificationWindow",
         "description": "Tramo de datos usado para identificar.\n\nEs un recorte alrededor del escalón, NO el buffer completo. La UI lo\nnecesita para graficar medido contra simulado: las longitudes tienen\nque coincidir. El tiempo viene re-basado a 0 en el inicio de la ventana."
+      },
+      "ImportMapping": {
+        "properties": {
+          "actuator": {
+            "type": "string",
+            "title": "Actuator",
+            "description": "Obligatoria: la entrada del proceso"
+          },
+          "sensor": {
+            "type": "string",
+            "title": "Sensor",
+            "description": "Obligatoria: la respuesta del proceso"
+          },
+          "setpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Setpoint",
+            "description": "Opcional"
+          }
+        },
+        "type": "object",
+        "required": [
+          "actuator",
+          "sensor"
+        ],
+        "title": "ImportMapping",
+        "description": "Qué variable del ARCHIVO cumple cada rol."
+      },
+      "ImportStatus": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "realtime | imported"
+          },
+          "active": {
+            "type": "boolean",
+            "title": "Active",
+            "description": "True si el buffer contiene datos de archivo"
+          },
+          "source_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Name"
+          },
+          "format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Format"
+          },
+          "samples": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Samples"
+          },
+          "sample_period_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sample Period S"
+          },
+          "mapping": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mapping"
+          },
+          "loaded_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Loaded At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "active"
+        ],
+        "title": "ImportStatus",
+        "example": {
+          "active": true,
+          "format": "codesys-trace",
+          "loaded_at": 1754413200.5,
+          "mapping": {
+            "actuator": "Main_Control.PID_OUT",
+            "sensor": "Main_Control.Velocidad_Scaled",
+            "setpoint": "DB_HMI.HMI_SP_Local_Automatico"
+          },
+          "sample_period_s": 0.02,
+          "samples": 1517,
+          "source": "imported",
+          "source_name": "data_sinto_05_08.trace.csv"
+        }
+      },
+      "ImportedVariableSummary": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Nombre tal como aparece en el archivo"
+          },
+          "samples": {
+            "type": "integer",
+            "title": "Samples"
+          },
+          "min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min"
+          },
+          "max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max"
+          },
+          "first": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First"
+          },
+          "last": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last"
+          },
+          "preview": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Preview",
+            "description": "Primeros valores, para el modal"
+          },
+          "constant": {
+            "type": "boolean",
+            "title": "Constant",
+            "description": "True si la señal no se mueve: no sirve como actuador ni sensor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "samples",
+          "min",
+          "max",
+          "first",
+          "last",
+          "preview",
+          "constant"
+        ],
+        "title": "ImportedVariableSummary"
+      },
+      "LoadRequest": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "title": "Token",
+            "description": "El devuelto por /parse"
+          },
+          "mapping": {
+            "$ref": "#/components/schemas/ImportMapping"
+          },
+          "scale": {
+            "type": "string",
+            "title": "Scale",
+            "description": "Escala de las señales del archivo (ma | pct | v). Un trace de CODESYS suele venir en unidades de ingeniería 0-100: pct.",
+            "default": "pct"
+          }
+        },
+        "type": "object",
+        "required": [
+          "token",
+          "mapping"
+        ],
+        "title": "LoadRequest",
+        "example": {
+          "mapping": {
+            "actuator": "Main_Control.PID_OUT",
+            "sensor": "Main_Control.Velocidad_Scaled",
+            "setpoint": "DB_HMI.HMI_SP_Local_Automatico"
+          },
+          "scale": "pct",
+          "token": "a3f8c2"
+        }
+      },
+      "LoadResponse": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "realtime | imported"
+          },
+          "active": {
+            "type": "boolean",
+            "title": "Active",
+            "description": "True si el buffer contiene datos de archivo"
+          },
+          "source_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Name"
+          },
+          "format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Format"
+          },
+          "samples": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Samples"
+          },
+          "sample_period_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sample Period S"
+          },
+          "mapping": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mapping"
+          },
+          "loaded_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Loaded At"
+          },
+          "ok": {
+            "type": "boolean",
+            "title": "Ok",
+            "default": true
+          },
+          "buffer_size": {
+            "type": "integer",
+            "title": "Buffer Size",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "active"
+        ],
+        "title": "LoadResponse",
+        "example": {
+          "active": true,
+          "format": "codesys-trace",
+          "loaded_at": 1754413200.5,
+          "mapping": {
+            "actuator": "Main_Control.PID_OUT",
+            "sensor": "Main_Control.Velocidad_Scaled",
+            "setpoint": "DB_HMI.HMI_SP_Local_Automatico"
+          },
+          "sample_period_s": 0.02,
+          "samples": 1517,
+          "source": "imported",
+          "source_name": "data_sinto_05_08.trace.csv"
+        }
       },
       "LoginResponse": {
         "properties": {
@@ -1903,6 +2473,106 @@
           "method": "SIMC",
           "td": 0.0,
           "ti": 8.0
+        }
+      },
+      "ParseResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "token": {
+            "type": "string",
+            "title": "Token",
+            "description": "Identificador del archivo parseado. Se envía luego en /load para no volver a subir el archivo."
+          },
+          "source_name": {
+            "type": "string",
+            "title": "Source Name"
+          },
+          "format": {
+            "type": "string",
+            "title": "Format",
+            "description": "codesys-trace | csv | xlsx"
+          },
+          "samples": {
+            "type": "integer",
+            "title": "Samples"
+          },
+          "duration_s": {
+            "type": "number",
+            "title": "Duration S"
+          },
+          "sample_period_s": {
+            "type": "number",
+            "title": "Sample Period S"
+          },
+          "variables": {
+            "items": {
+              "$ref": "#/components/schemas/ImportedVariableSummary"
+            },
+            "type": "array",
+            "title": "Variables"
+          },
+          "suggested_mapping": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Suggested Mapping",
+            "description": "Sugerencia por heurística sobre los NOMBRES del archivo (busca 'out'/'pid' para actuador, 'sp'/'setpoint' para consigna...). Solo pre-selecciona el modal; el usuario decide."
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "token",
+          "source_name",
+          "format",
+          "samples",
+          "duration_s",
+          "sample_period_s",
+          "variables",
+          "suggested_mapping"
+        ],
+        "title": "ParseResponse",
+        "description": "Lo que devuelve /parse: qué trae el archivo, para armar el modal de mapeo.",
+        "example": {
+          "duration_s": 30.32,
+          "format": "codesys-trace",
+          "ok": true,
+          "sample_period_s": 0.02,
+          "samples": 1517,
+          "source_name": "data_sinto_05_08.trace.csv",
+          "suggested_mapping": {
+            "actuator": "Main_Control.PID_OUT",
+            "sensor": "Main_Control.Velocidad_Scaled",
+            "setpoint": "DB_HMI.HMI_SP_Local_Automatico"
+          },
+          "token": "a3f8c2",
+          "variables": [
+            {
+              "constant": false,
+              "first": 25.0,
+              "last": 50.0,
+              "max": 50.0,
+              "min": 25.0,
+              "name": "Main_Control.PID_OUT",
+              "preview": [
+                25.0,
+                25.0,
+                25.0
+              ],
+              "samples": 1517
+            }
+          ]
         }
       },
       "PlcVariable": {
@@ -3225,6 +3895,10 @@
     {
       "name": "Identificación",
       "description": "Resultados del motor de identificación. Se generan **automáticamente** cuando se detecta un escalón; no hay endpoint para dispararla a mano."
+    },
+    {
+      "name": "Importación",
+      "description": "Ensayos desde archivo: trace de CODESYS, CSV tabular o Excel. Mientras el modo importado está activo, las muestras del PLC se **ignoran** para no mezclar fuentes."
     },
     {
       "name": "Ensayo",

@@ -7,4 +7,4 @@ jinja2
 numpy
 scipy
 matplotlib
-openpyxl
+openpyxlpython-multipart

@@ -7,18 +7,46 @@ class StepDetectorService:
     def __init__(self, min_step_delta: float = 1.0) -> None:
         self.min_step_delta = min_step_delta
 
-    def find_latest_rising_step_index(self, actuator_data: list[float]) -> int | None:
+    def find_latest_rising_step_index(
+        self, actuator_data: list[float], window: int | None = None
+    ) -> int | None:
         """
-        Busca el último escalón positivo (subida) suficientemente grande.
-        Recorre desde el final para agarrar el evento más reciente.
+        Busca la última subida suficientemente grande y devuelve el índice
+        donde ARRANCA.
+
+        La comparación es sobre una **ventana deslizante**, no entre muestras
+        consecutivas. Un actuador real casi nunca salta de golpe: la salida de
+        un PID con rate limiter sube en rampa (por ejemplo 0.4 por muestra), y
+        mirando solo deltas consecutivos una subida de 25 unidades pasaría
+        desapercibida. Lo que define el escalón es el cambio acumulado, no la
+        pendiente instantánea.
+
+        Devuelve el inicio de la transición porque el tiempo muerto del
+        proceso se mide desde que el actuador EMPIEZA a moverse.
         """
-        if len(actuator_data) < 2:
+        n = len(actuator_data)
+        if n < 2:
             return None
 
-        for i in range(len(actuator_data) - 1, 0, -1):
-            delta = actuator_data[i] - actuator_data[i - 1]
-            if delta >= self.min_step_delta:
-                return i
+        # Ventana proporcional al registro, acotada: cubre rampas de hasta
+        # ~5 % del largo de la serie sin dejar pasar un escalón instantáneo.
+        w = window if window is not None else max(1, min(n // 20, 60))
+
+        # Umbral de "sigue subiendo" al deshacer la rampa: bien por debajo de
+        # la pendiente de una transición real, por encima del ruido plano.
+        rise_eps = max(self.min_step_delta / max(w, 1) * 0.1, 1e-9)
+
+        for i in range(n - 1, w - 1, -1):
+            if actuator_data[i] - actuator_data[i - w] < self.min_step_delta:
+                continue
+
+            # Transición encontrada. Se camina hacia atrás hasta donde el
+            # actuador dejó de subir: ese es el arranque real de la rampa.
+            j = i - w
+            while j > 0 and actuator_data[j] - actuator_data[j - 1] > rise_eps:
+                j -= 1
+
+            return j + 1
 
         return None
 

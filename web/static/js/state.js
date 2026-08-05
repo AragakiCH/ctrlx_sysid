@@ -36,6 +36,11 @@ window.State = {
     signal_type: null
   },
 
+  // True mientras un cambio de mapeo viaja al backend. Sirve para que la
+  // re-sincronización de los <select> no los devuelva al valor anterior
+  // durante ese intervalo.
+  mappingPending: false,
+
   // ---------- Ensayo y escalas (GET/POST /api/test) ----------
   // El backend es la fuente de verdad de las conversiones mA/%/V.
   test: {
@@ -44,32 +49,35 @@ window.State = {
     available: []      // catálogo de escalas soportadas
   },
 
-  // ---------- Buffer de muestras en tiempo real ----------
-  // Alimentado por tickEnsayo (websocket.js) cada 200 ms mientras dure el ensayo.
-  //
-  // Distinción importante:
-  //   - actuator_ideal → valor SINTÉTICO del escalón (viene de paso 2).
-  //                     Se usa en el CHART cAct.
-  //   - actuator_ma / actuator_pct → valor REAL del PLC (via mapping).
-  //                     Se usa en los textareas de paso 1 y para identificar.
-  //   - sensor_ma / sensor_pct / setpoint_* → valores REALES del PLC.
   // ---------- Buffer de muestras del ensayo ----------
-  // Lo llena websocket.js con los mensajes {type:"test_tick"} del backend.
+  // Lo llena `onTestTick` (websocket.js) con los mensajes {type:"test_tick"}
+  // que emite el backend, al periodo de muestreo configurado.
   //
-  // El sufijo `_ma` es histórico: en realidad guarda el valor en la escala
-  // que el usuario declaró para ese rol (4-20 mA, 0-100 % o 0-10 V). La
-  // unidad real viene en `State.ensayo.plan.unit`.
+  //   actuator_*      → lo que el PLC REPORTA en la variable mapeada al rol.
+  //   actuator_cmd_*  → lo que el backend COMANDA según el perfil del ensayo.
+  //   sensor_* / setpoint_* → valores REALES del PLC.
+  //
+  // Comandado y leído son cosas distintas y van separados: compararlos es lo
+  // que dice si el actuador obedeció, saturó o ni se enteró. La identificación
+  // corre sobre el LEÍDO, así que es ese el que se grafica y el que va a los
+  // textareas del paso 1.
+  //
+  // El sufijo `_ma` es histórico: guarda el valor en la escala que el usuario
+  // declaró para ese rol (4-20 mA, 0-100 % o 0-10 V). La unidad real viene en
+  // `State.ensayo.plan.unit`.
   //
   // No hay tope de puntos: el ensayo tiene largo acotado
   // (duration_s / sample_period_s), así que el buffer no crece sin fin.
   sampleStore: {
-    time:         [],
-    actuator_ma:  [],
-    sensor_ma:    [],
-    setpoint_ma:  [],
-    actuator_pct: [],
-    sensor_pct:   [],
-    setpoint_pct: []
+    time:            [],
+    actuator_ma:     [],
+    sensor_ma:       [],
+    setpoint_ma:     [],
+    actuator_pct:    [],
+    sensor_pct:      [],
+    setpoint_pct:    [],
+    actuator_cmd_ma:  [],
+    actuator_cmd_pct: []
   },
 
   // ---------- Resultados de identificación ----------
@@ -124,12 +132,9 @@ window.State = {
 /** Limpia el buffer de muestras. */
 function resetSampleStore() {
   const s = State.sampleStore;
-  s.time = [];
-  s.actuator_ideal = [];
-  s.actuator_ma = [];
-  s.sensor_ma = [];
-  s.setpoint_ma = [];
-  s.actuator_pct = [];
-  s.sensor_pct = [];
-  s.setpoint_pct = [];
+  // Se recorren las claves en vez de listarlas a mano: añadir un arreglo nuevo
+  // y olvidar limpiarlo aquí deja datos del ensayo anterior mezclados.
+  Object.keys(s).forEach((k) => {
+    if (Array.isArray(s[k])) s[k] = [];
+  });
 }
