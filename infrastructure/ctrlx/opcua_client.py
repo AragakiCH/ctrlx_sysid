@@ -3,11 +3,45 @@ from __future__ import annotations
 import os
 from typing import Optional, Tuple
 
-from opcua import Client
+from opcua import Client, ua
 
 
 class OpcUaConnectionError(Exception):
     pass
+
+
+# Variantes enteras: el servidor las rechaza si se les manda un float.
+_INTEGER_VARIANTS = frozenset(
+    {
+        ua.VariantType.SByte,
+        ua.VariantType.Byte,
+        ua.VariantType.Int16,
+        ua.VariantType.UInt16,
+        ua.VariantType.Int32,
+        ua.VariantType.UInt32,
+        ua.VariantType.Int64,
+        ua.VariantType.UInt64,
+    }
+)
+
+_FLOAT_VARIANTS = frozenset({ua.VariantType.Float, ua.VariantType.Double})
+
+
+def coerce_to_variant(value, variant_type):
+    """
+    Adapta un valor de Python al tipo que declara el servidor.
+
+    No basta con etiquetar el Variant: `ua.Variant(25.0, Int16)` explota al
+    serializar ("required argument is not an integer") porque el valor sigue
+    siendo un float. Hay que convertir el valor, no solo la etiqueta.
+    """
+    if variant_type in _INTEGER_VARIANTS:
+        return int(round(float(value)))
+    if variant_type in _FLOAT_VARIANTS:
+        return float(value)
+    if variant_type is ua.VariantType.Boolean:
+        return bool(value)
+    return value
 
 
 class CtrlxOpcUaClient:
@@ -240,15 +274,26 @@ class CtrlxOpcUaClient:
         """
         Escribe respetando el tipo que declara el servidor.
 
-        Mandar un `float` de Python a una variable declarada como `Float`
-        (32 bits) hace que python-opcua envíe un Double y el servidor conteste
-        `BadTypeMismatch`. Por eso se construye el Variant con el tipo del nodo.
+        Mandar un `float` de Python a una variable declarada como entera hace
+        que python-opcua envíe un Double y el servidor conteste
+        `BadTypeMismatch`. Por eso se resuelve el tipo del nodo y se convierte
+        el valor antes de construir el Variant.
+
+        La resolución del tipo y la escritura van en bloques separados a
+        propósito: si el `set_value` falla, el error tiene que llegar a quien
+        llama. Reintentar a ciegas con un valor sin tipar solo cambiaba un
+        error claro por un `BadTypeMismatch` repetido.
         """
         target = self.value_node(node)
 
         try:
             variant_type = target.get_data_type_as_variant_type()
-            target.set_value(ua.Variant(value, variant_type))
         except Exception:
-            # Último recurso: dejar que la librería infiera el tipo.
+            variant_type = None
+
+        if variant_type is None:
+            # Sin información del servidor: que la librería infiera el tipo.
             target.set_value(value)
+            return
+
+        target.set_value(ua.Variant(coerce_to_variant(value, variant_type), variant_type))
