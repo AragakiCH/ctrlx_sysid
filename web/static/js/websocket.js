@@ -199,10 +199,7 @@ function onTestStarted(data) {
   document.getElementById("btnToIdent").style.display = "none";
 
   const box = document.getElementById("ensayoTimerBox");
-  if (box) {
-    box.style.display = "";
-    box.className     = "ensayo-timer running";
-  }
+  if (box) box.className = "ensayo-timer running";
 
   plotCapture();
 

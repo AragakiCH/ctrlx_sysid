@@ -111,9 +111,14 @@ function plotCapture() {
     Number(State.test?.step?.duration_s) ||
     120;
 
-  const time     = store.time;
-  const actuator = type === "pct" ? store.actuator_pct : store.actuator_ma;
-  const sensor   = type === "pct" ? store.sensor_pct   : store.sensor_ma;
+  const time = store.time;
+
+  // Actuador: chart siempre muestra el escalón SINTÉTICO (viene del paso 2).
+  // Los valores reales del PLC van al textarea via fillManualTextareas.
+  const actuator = store.actuator_ideal;
+
+  // Sensor: chart muestra los valores REALES del PLC.
+  const sensor = type === "pct" ? store.sensor_pct : store.sensor_ma;
 
   const actData = time.map((t, i) => ({ x: t, y: actuator[i] }));
   const senData = time.map((t, i) => ({ x: t, y: sensor[i] }));
