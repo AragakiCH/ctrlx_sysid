@@ -80,15 +80,12 @@ function startCapture() {
   document.getElementById("btnToIdent").style.display = "none";
 
   const box = document.getElementById("ensayoTimerBox");
-  if (box) {
-    box.style.display = "";
-    box.className     = "ensayo-timer running";
-  }
+  if (box) box.className = "ensayo-timer running";
 
   plotCapture();
   ensureWebSocket();  // WS sigue abierto para live values y dropdowns
 
-  setStatus(`Ensayo en curso — ${duration} s de captura`, "running");
+  // El timer flotante ya comunica "ensayo en curso" — no duplicamos con toast.
 }
 
 
@@ -108,22 +105,23 @@ function tickEnsayo() {
 
   const elapsed = (Date.now() - State.ensayo.startedAt) / 1000;
 
-  // Valor IDEAL del actuador (sintético)
+  // Valor IDEAL del actuador (sintético, para el chart)
   const ideal = elapsed < State.ensayo.delayS
     ? State.ensayo.stepFrom
     : State.ensayo.stepTo;
 
-  // Último valor REAL del sensor y setpoint (cacheado por handleSample)
+  // Últimos valores REALES del PLC (cacheados por handleSample vía mapping)
   const latest = State.latestSample || {};
 
   const s = State.sampleStore;
   s.time.push(elapsed);
-  s.actuator_ma.push(ideal);
-  s.actuator_pct.push(null);
-  s.sensor_ma.push(latest.sensorMa);         // ← REAL del PLC
-  s.sensor_pct.push(latest.sensorPct);       // ← REAL del PLC
-  s.setpoint_ma.push(latest.setpointMa);     // ← REAL del PLC
-  s.setpoint_pct.push(latest.setpointPct);   // ← REAL del PLC
+  s.actuator_ideal.push(ideal);                // ← SINTÉTICO — chart cAct
+  s.actuator_ma.push(latest.actuatorMa);       // ← REAL del PLC — textarea + identificación
+  s.actuator_pct.push(latest.actuatorPct);     // ← REAL del PLC
+  s.sensor_ma.push(latest.sensorMa);           // ← REAL del PLC
+  s.sensor_pct.push(latest.sensorPct);         // ← REAL del PLC
+  s.setpoint_ma.push(latest.setpointMa);       // ← REAL del PLC
+  s.setpoint_pct.push(latest.setpointPct);     // ← REAL del PLC
 
   // Contador
   const counter = document.getElementById("ensayoCounter");
@@ -166,9 +164,9 @@ function finishEnsayo() {
     State.ensayo.timerId = null;
   }
 
-  // El contador desaparece al finalizar (pedido explícito).
+  // El contador desaparece al finalizar (fade + slide out por CSS).
   const box = document.getElementById("ensayoTimerBox");
-  if (box) box.style.display = "none";
+  if (box) box.className = "ensayo-timer";
 
   document.getElementById("btnStop").style.display  = "none";
   document.getElementById("btnStart").style.display = "";
@@ -197,7 +195,7 @@ function stopCapture() {
   document.getElementById("btnStart").style.display = "";
 
   const box = document.getElementById("ensayoTimerBox");
-  if (box) box.style.display = "none";
+  if (box) box.className = "ensayo-timer";
 
   setStatus("Ensayo detenido por el usuario", "error");
 }

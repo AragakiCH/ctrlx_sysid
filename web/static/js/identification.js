@@ -133,10 +133,16 @@ function renderTransferFunction(m) {
 }
 
 
-/** Cards apiladas con cada modelo alternativo (clic para seleccionar). */
+/** Cards apiladas con cada modelo alternativo (clic para seleccionar).
+ *  Marca visualmente:
+ *    - `.winner` → la ganadora por R² (badge "MEJOR"), no cambia con la selección.
+ *    - `.sel`    → la card actualmente seleccionada por el usuario (empieza como la ganadora).
+ */
 function renderAltCards(models, winnerType) {
   const ac = document.getElementById("altCards");
   if (!ac) return;
+
+  const activeIdx = State.identification.active ?? 0;
 
   ac.innerHTML = models
     .map((r, i) => {
@@ -153,10 +159,20 @@ function renderAltCards(models, winnerType) {
       if (parseFloat(L) > 0) tf += `·e^(-${L}s)`;
 
       const isWinner = r.model_type === winnerType;
+      const isActive = i === activeIdx;
+
+      const cls = [
+        "alt-card",
+        isWinner ? "winner" : "",
+        isActive ? "sel"    : ""
+      ].filter(Boolean).join(" ");
 
       return `
-        <div class="alt-card${isWinner ? " sel" : ""}" onclick="selectAlt(${i})">
-          <div class="alt-method">${modelTypeLabel(r.model_type)}</div>
+        <div class="${cls}" onclick="selectAlt(${i})">
+          <div class="alt-method">
+            <span>${modelTypeLabel(r.model_type)}</span>
+            ${isWinner ? '<span class="winner-badge">MEJOR</span>' : ""}
+          </div>
           <div class="alt-r2">R² ${formatNumber(r.fit_quality, 1)}%</div>
           <div class="alt-tf">${tf}</div>
         </div>
@@ -166,12 +182,45 @@ function renderAltCards(models, winnerType) {
 }
 
 
-/** Selecciona un modelo alternativo y refresca la vista de PID. */
+/**
+ * Al seleccionar un modelo alternativo, todo el panel superior
+ * (métricas, función de transferencia, chart Medido-vs-Modelo, Bode)
+ * y la tabla PID se recalculan para ese modelo.
+ * El "MEJOR" (badge en la card ganadora) queda anclado al winner por R²,
+ * no se mueve con la selección.
+ */
 function selectAlt(i) {
-  document.querySelectorAll(".alt-card").forEach((c, j) => c.classList.toggle("sel", j === i));
+  const models = State.identification.models;
+  if (!models.length) return;
+
+  const selected = models[i];
+  if (!selected) return;
 
   State.identification.active = i;
-  if (State.identification.models.length) {
-    renderPID(State.identification.models, i);
+
+  // 1. Selección visual en las alt-cards
+  document.querySelectorAll(".alt-card").forEach((c, j) => c.classList.toggle("sel", j === i));
+
+  // 2. Métricas del top
+  document.getElementById("mModel").textContent = modelTypeLabel(selected.model_type);
+  document.getElementById("mFit").textContent   = formatNumber(selected.fit_quality, 1) + "%";
+  document.getElementById("mK").textContent     = formatNumber(selected.gain, 4);
+  document.getElementById("mL").textContent     = formatNumber(selected.dead_time, 4) + "s";
+
+  // 3. Caja G(s)
+  renderTransferFunction(selected);
+
+  // 4. Chart Medido vs Modelo (si hay curva simulada + captura)
+  if (Array.isArray(selected.simulated) && selected.simulated.length) {
+    const s = State.sampleStore;
+    const type = getSignalType();
+    const measured = type === "pct" ? s.sensor_pct : s.sensor_ma;
+    if (s.time.length) plotComparison(s.time, measured, selected.simulated);
   }
+
+  // 5. Diagrama de Bode
+  if (typeof renderBode === "function") renderBode(selected);
+
+  // 6. Sintonía PID
+  renderPID(models, i);
 }

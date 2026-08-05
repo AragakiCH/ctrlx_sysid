@@ -45,16 +45,24 @@ window.State = {
   },
 
   // ---------- Buffer de muestras en tiempo real ----------
-  // Alimentado por websocket.js cuando llegan mensajes {type:"sample"}
+  // Alimentado por tickEnsayo (websocket.js) cada 200 ms mientras dure el ensayo.
+  //
+  // Distinción importante:
+  //   - actuator_ideal → valor SINTÉTICO del escalón (viene de paso 2).
+  //                     Se usa en el CHART cAct.
+  //   - actuator_ma / actuator_pct → valor REAL del PLC (via mapping).
+  //                     Se usa en los textareas de paso 1 y para identificar.
+  //   - sensor_ma / sensor_pct / setpoint_* → valores REALES del PLC.
   sampleStore: {
-    time:         [],
-    actuator_ma:  [],
-    sensor_ma:    [],
-    setpoint_ma:  [],
-    actuator_pct: [],
-    sensor_pct:   [],
-    setpoint_pct: [],
-    maxPoints:    300
+    time:           [],
+    actuator_ideal: [],   // SINTÉTICO — chart del actuador
+    actuator_ma:    [],   // REAL — textarea, identificación
+    sensor_ma:      [],
+    setpoint_ma:    [],
+    actuator_pct:   [],
+    sensor_pct:     [],
+    setpoint_pct:   [],
+    maxPoints:      300
   },
 
   // ---------- Resultados de identificación ----------
@@ -105,6 +113,7 @@ window.State = {
 function resetSampleStore() {
   const s = State.sampleStore;
   s.time = [];
+  s.actuator_ideal = [];
   s.actuator_ma = [];
   s.sensor_ma = [];
   s.setpoint_ma = [];

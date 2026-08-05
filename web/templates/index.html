@@ -33,12 +33,13 @@
            Por ahora sin lógica de carga; solo abre el selector de archivos. -->
       <input type="file" id="fileImportInput" style="display:none" />
       <button
-        class="btn btn-secondary"
+        class="btn btn-import"
         onclick="openFileImport()"
         id="btnImport"
         title="Importar archivo"
       >
-        <i class="fa-solid fa-file-arrow-up"></i> Importar
+        <i class="fa-solid fa-file-arrow-up"></i>
+        <span>Importar</span>
       </button>
       <button
         class="btn btn-logout"
@@ -195,17 +196,6 @@
             <textarea id="manualSen" placeholder="4.0, 4.1, 5.2, 8.3 ..."></textarea>
           </div>
         </div>
-        <div class="mt-10 gap-8 flex-row">
-          <button class="btn btn-secondary" onclick="loadSample('fopdt')">
-            <i class="fa-solid fa-wand-magic-sparkles"></i> Demo FOPDT
-          </button>
-          <button class="btn btn-secondary" onclick="loadSample('sopdt')">
-            <i class="fa-solid fa-wand-magic-sparkles"></i> Demo SOPDT
-          </button>
-          <button class="btn btn-secondary" onclick="loadSample('integrating')">
-            <i class="fa-solid fa-wand-magic-sparkles"></i> Demo Integrante
-          </button>
-        </div>
       </div>
 
       <div class="btn-row">
@@ -274,8 +264,9 @@
     <!-- ═══════════ PASO 3: GRÁFICAS ═══════════ -->
     <section class="panel" id="p3">
 
-      <!-- Contador del ensayo (visible solo mientras corre) -->
-      <div class="ensayo-timer" id="ensayoTimerBox" style="display:none">
+      <!-- Contador del ensayo — notificación flotante top-right.
+           La visibilidad se controla con las clases .running / .done desde JS. -->
+      <div class="ensayo-timer" id="ensayoTimerBox">
         <i class="fa-solid fa-stopwatch ensayo-icon"></i>
         <span class="ensayo-lbl">Tiempo de ensayo</span>
         <span class="ensayo-val" id="ensayoCounter">—</span>
@@ -360,7 +351,7 @@
       <div id="ident-model">
         <div class="metrics" id="metricsRow" style="display:none">
           <div class="metric">
-            <div class="metric-lbl">Mejor modelo</div>
+            <div class="metric-lbl">Modelo activo</div>
             <div class="metric-val metric-val-sm" id="mModel">—</div>
           </div>
           <div class="metric">
