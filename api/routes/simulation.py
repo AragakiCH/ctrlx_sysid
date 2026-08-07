@@ -403,6 +403,39 @@ def set_writer(body: WriterRequest, request: Request) -> dict:
 
 
 @router.post(
+    "/reset",
+    response_model=TestRunState,
+    summary="Reiniciar la sesión de trabajo",
+    description=(
+        "Deja el backend como recién arrancado, **sin cerrar la sesión OPC UA**:\n\n"
+        "1. Detiene el ensayo en curso, devolviendo el actuador a su valor "
+        "inicial y desarmando la escritura.\n"
+        "2. Sale del modo importado, si estaba activo.\n"
+        "3. Vacía el buffer de muestras y descarta la identificación.\n\n"
+        "La configuración del paso 1 y 2 (mapeo, escalas, escalón) **se "
+        "conserva**: reiniciar sirve para repetir un ensayo que salió mal, no "
+        "para volver a configurarlo todo.\n\n"
+        "Es idempotente."
+    ),
+)
+def reset_session(request: Request) -> dict:
+    runner = _runner(request)
+    realtime = request.app.state.realtime_service
+
+    # El ensayo primero: si se limpiara el buffer con el runner todavía
+    # comandando, las muestras siguientes entrarían en un buffer "nuevo"
+    # mezcladas con el final del ensayo viejo.
+    estado = runner.stop()
+
+    if not realtime.accepts_realtime:
+        realtime.restore_realtime()
+
+    request.app.state.reset_runtime_state()
+
+    return estado
+
+
+@router.post(
     "/stop",
     response_model=TestRunState,
     summary="Detener el ensayo",

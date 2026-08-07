@@ -253,17 +253,41 @@ class TestConfigService:
             )
             return max(delta_pct * 0.5, 1.0)
 
-    def pre_samples(self) -> int:
-        """Muestras a conservar antes del escalón (línea base)."""
+    def pre_samples(self, period_s: Optional[float] = None) -> int:
+        """
+        Muestras a conservar antes del escalón (línea base).
+
+        `period_s` permite pasar el periodo **medido** en vez del configurado.
+        La ventana se define en segundos (`delay_s`); traducirla a muestras con
+        un periodo que no es el real pide más puntos de los que existen.
+        """
         with self._lock:
-            n = int(self._delay_s / self._sample_period_s)
+            periodo = period_s or self._sample_period_s
+            if periodo <= 0:
+                periodo = self._sample_period_s
+
+            n = int(self._delay_s / periodo)
             return max(self.MIN_PRE_SAMPLES, min(n, 200))
 
-    def post_samples(self) -> int:
+    def post_samples(self, period_s: Optional[float] = None) -> int:
         """Muestras de respuesta a capturar después del escalón."""
         with self._lock:
-            n = int((self._duration_s - self._delay_s) / self._sample_period_s)
+            periodo = period_s or self._sample_period_s
+            if periodo <= 0:
+                periodo = self._sample_period_s
+
+            n = int((self._duration_s - self._delay_s) / periodo)
             return max(self.MIN_POST_SAMPLES, n)
+
+    def response_seconds(self) -> float:
+        """Segundos de respuesta que pide el ensayo tras el escalón."""
+        with self._lock:
+            return max(0.0, self._duration_s - self._delay_s)
+
+    def baseline_seconds(self) -> float:
+        """Segundos de línea base antes del escalón."""
+        with self._lock:
+            return self._delay_s
 
     def expected_samples(self) -> int:
         with self._lock:

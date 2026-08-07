@@ -877,9 +877,50 @@ function handleIdentificationResult(data) {
   // (btnIdent ya está siempre visible: es el disparador manual)
   document.getElementById("btnToIdent").style.display = "";
 
+  renderIdentWarnings(data);
+
+  const r2 = models[State.identification.active]?.fit_quality;
+  const avisos = Array.isArray(data.warnings) ? data.warnings : [];
+
+  // Un R² bonito con avisos graves detrás es peor que un error: invita a
+  // sintonizar un PID con una dinámica que nadie midió.
   setStatus(
-    "Identificación lista — mejor ajuste R²: " +
-      formatNumber(models[State.identification.active]?.fit_quality, 1) + "%",
-    "ok"
+    avisos.length
+      ? `Identificación lista con reservas (R² ${formatNumber(r2, 1)}%) — ${avisos[0]}`
+      : `Identificación lista — mejor ajuste R²: ${formatNumber(r2, 1)}%`,
+    avisos.length ? "running" : "ok"
   );
+}
+
+
+/**
+ * Pinta los avisos de calidad sobre el panel del paso 4.
+ *
+ * El backend los manda en `warnings`. Son casos en los que el ajuste
+ * *converge* pero no describe la planta —el más común es que el proceso sea
+ * más rápido que el muestreo, con lo que tau se colapsa a cero y queda una
+ * ganancia pura—. Sin mostrarlos, el resultado se ve idéntico a uno bueno.
+ */
+function renderIdentWarnings(data) {
+  const cont = document.getElementById("identWarnings");
+  if (!cont) return;
+
+  const avisos = Array.isArray(data?.warnings) ? data.warnings : [];
+
+  if (!avisos.length) {
+    cont.innerHTML = "";
+    cont.style.display = "none";
+    return;
+  }
+
+  cont.innerHTML = avisos
+    .map(
+      (w) =>
+        `<div class="ident-warning">
+           <i class="fa-solid fa-triangle-exclamation"></i>
+           <span>${escapeHtml(w)}</span>
+         </div>`
+    )
+    .join("");
+  cont.style.display = "block";
 }

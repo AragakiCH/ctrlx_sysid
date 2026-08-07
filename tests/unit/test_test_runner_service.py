@@ -243,10 +243,58 @@ def test_con_writer_se_llama_una_vez_por_muestra(runner):
     runner.start()
     run_to_completion(runner)
 
-    assert runner.writes_enabled is True
     # 100 ticks + la escritura de retorno a step_from al terminar.
     assert len(escrituras) == 101
     assert sorted(set(escrituras)) == [8.0, 12.0]
+
+
+def test_al_terminar_se_suelta_el_actuador(runner):
+    """
+    La última escritura debe ser el valor inicial, y después de esa el ensayo
+    deja de gobernar el actuador.
+
+    La variable del actuador suele ser una que también escribe la HMI. Si el
+    escritor quedara armado al terminar, habría dos dueños del mismo dato y el
+    operador no recuperaría el control.
+    """
+    escrituras = []
+    runner.set_writer(escrituras.append)
+
+    runner.start()
+    run_to_completion(runner)
+
+    assert escrituras[-1] == 8.0          # step_from
+    assert runner.writes_enabled is False  # ya no se comanda nada
+
+
+def test_el_stop_tambien_suelta_el_actuador(runner):
+    escrituras = []
+    runner.set_writer(escrituras.append)
+
+    runner.start()
+    runner.stop()
+
+    assert escrituras[-1] == 8.0
+    assert runner.writes_enabled is False
+
+
+def test_soltar_el_actuador_se_anuncia(runner):
+    runner.set_writer(lambda v: None)
+    runner.start()
+    run_to_completion(runner)
+
+    liberado = [e for e in runner.eventos if e["type"] == "writer_released"]
+
+    assert len(liberado) == 1
+    assert liberado[0]["data"]["enabled"] is False
+
+
+def test_sin_writer_no_se_anuncia_liberacion(runner):
+    """No se armó nada, así que no hay nada que soltar ni que anunciar."""
+    runner.start()
+    run_to_completion(runner)
+
+    assert not [e for e in runner.eventos if e["type"] == "writer_released"]
 
 
 def test_un_fallo_suelto_no_aborta_el_ensayo(runner):

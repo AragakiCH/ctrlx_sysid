@@ -226,6 +226,27 @@ class NodeRepository:
 
         return None
 
+    def list_variable_names(self, program_node) -> list[str]:
+        """
+        Solo los nombres de los hijos del programa, sin leer ningún valor.
+
+        Es un browse y nada más. Sirve para poblar los desplegables de la vista
+        sin pagar un round trip de lectura por variable, que es lo que hace
+        `read_program_values`.
+        """
+        names: list[str] = []
+
+        for child in program_node.get_children():
+            try:
+                name = child.get_browse_name().Name
+            except Exception:
+                continue
+
+            if name:
+                names.append(name)
+
+        return names
+
     def read_program_values(self, program_node) -> dict[str, Any]:
         """Lectura cruda nombre -> valor de todos los hijos del programa."""
         values: dict[str, Any] = {}

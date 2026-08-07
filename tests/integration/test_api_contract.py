@@ -183,6 +183,8 @@ def test_latest_devuelve_el_payload_completo(client, identified):
         "winner",
         "truncated",
         "requested_post_samples",
+        "sampling",
+        "warnings",
         "window",
         "models",
     }

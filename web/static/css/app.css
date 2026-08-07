@@ -1505,3 +1505,60 @@ hr {
   justify-content: flex-end;
   gap: 10px;
 }
+
+/* ==================== AVISOS DE CALIDAD DEL AJUSTE ==================== */
+/* Un modelo puede converger y aun así no describir la planta. Estos avisos
+   tienen que competir visualmente con el número grande de R², que es lo que
+   el ojo busca primero. */
+#identWarnings {
+  margin: 10px 0 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ident-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--warning);
+  background: var(--warning-bg);
+  border: 0.5px solid var(--warning-border);
+  border-radius: var(--radius);
+}
+
+.ident-warning i {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+/* Botón para volver al rango completo del chart medido-vs-modelo.
+   El zoom es por rueda/arrastre y eso no se descubre solo: el botón hace
+   visible que el gráfico es interactivo, además de servir de escape. */
+.btn-zoom-reset {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 10px;
+  padding: 3px 9px;
+  font-family: var(--font);
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--text2);
+  background: var(--surface2);
+  border: 0.5px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--t-fast);
+}
+
+.btn-zoom-reset:hover {
+  color: var(--accent-text);
+  border-color: var(--border-focus);
+  background: var(--accent-bg);
+}
+
+#cCmp { cursor: grab; }

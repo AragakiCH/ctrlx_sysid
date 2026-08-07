@@ -150,6 +150,67 @@ async function applyMappingChange() {
 
 
 /* =========================================================
+   REINICIO DE LA SESIÓN DE TRABAJO
+   Descarta ensayo, buffer y resultados SIN cerrar la sesión
+   OPC UA ni perder la configuración de los pasos 1 y 2.
+   ========================================================= */
+
+/**
+ * Deja la app lista para repetir el ensayo desde cero.
+ *
+ * No cierra sesión ni borra el mapeo a propósito: cuando un ensayo sale mal lo
+ * que hay que descartar son los datos, no la configuración. Obligar a
+ * reconectar y volver a mapear las variables para repetir una prueba convierte
+ * un reintento de diez segundos en un trámite de dos minutos.
+ */
+async function reiniciarSesionDeTrabajo() {
+  const btn = document.getElementById("btnReset");
+
+  if (btn) btn.disabled = true;
+  setStatus("Reiniciando...", "running");
+
+  try {
+    // 1. Backend: detiene el ensayo, devuelve el actuador a su valor inicial,
+    //    desarma la escritura, sale del modo importado y vacía el buffer.
+    const r = await fetch(`${State.API_BASE}/api/test/reset`, { method: "POST" });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail || `HTTP ${r.status}`);
+    }
+
+    // 2. Estado del cliente.
+    resetSampleStore();
+    State.identification.models = [];
+    State.identification.winner = null;
+    State.identification.active = 0;
+
+    if (typeof removeImportBanner === "function") removeImportBanner();
+
+    // 3. Vista: ocultar todo lo que dependía de un resultado.
+    ["btnToIdent", "btnToPID", "btnExport"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = "none";
+    });
+
+    if (typeof clearLiveValues === "function") clearLiveValues();
+    if (typeof plotCapture === "function") plotCapture(0);
+
+    goStep(1);
+    setStatus(
+      "Listo para un ensayo nuevo. Se conservaron el mapeo, las escalas y las " +
+        "condiciones del paso 2.",
+      "ok"
+    );
+  } catch (err) {
+    console.error("Error reiniciando:", err);
+    setStatus(`No se pudo reiniciar: ${err.message}`, "error");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+
+/* =========================================================
    LOGOUT
    Cierra la sesión OPC UA en el backend, limpia storage
    local y redirige al login.

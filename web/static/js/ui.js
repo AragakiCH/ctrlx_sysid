@@ -64,8 +64,15 @@ const BADGE_CLS = { ma: "badge-ma",  pct: "badge-pct", v: "badge-v" };
 const BADGE_LBL = { ma: "4-20 mA",   pct: "0-100 %",   v: "0-10 V" };
 
 /** Refresca el badge de la variable indicada ("act" | "sen" | "sp"). */
+// Id del <select> de cada rol. Antes se derivaba del nombre corto capitalizando
+// la primera letra ("sp" -> "typeSp"), pero el elemento se llama "typeSP":
+// getElementById devolvía null, la función salía sin hacer nada y el badge del
+// Set Point se quedaba congelado en el valor que traía el HTML. En pantalla el
+// combo decía "0-100 %" y la etiqueta al lado "4-20 mA".
+const SELECT_POR_ROL = { act: "typeAct", sen: "typeSen", sp: "typeSP" };
+
 function updateBadge(which) {
-  const sel = document.getElementById("type" + which[0].toUpperCase() + which.slice(1));
+  const sel = document.getElementById(SELECT_POR_ROL[which]);
   const b   = document.getElementById("badge-" + which);
   if (!sel || !b) return;
 

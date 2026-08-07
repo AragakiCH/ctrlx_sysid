@@ -89,17 +89,33 @@ def run_identification(
 
     series = realtime_service.get_signal_series(use_percent=True)
 
+    nominal = test_config_service.describe_step_config()["sample_period_s"]
+    muestreo = realtime_service.sampling_report(nominal_period_s=nominal)
+    periodo = muestreo["measured_period_s"] or nominal
+
     if len(series.time) < 40:
+        pista = ""
+        if muestreo["ratio"] and muestreo["ratio"] > 1.5:
+            pista = (
+                f" El muestreo real está en {muestreo['measured_period_s']} s "
+                f"({muestreo['effective_rate_hz']} Hz), {muestreo['ratio']}× más lento "
+                f"que los {nominal} s configurados: la lectura del PLC no da para "
+                "más. Alarga la duración del ensayo o sube el 'Tiempo de muestreo' "
+                "del paso 1 a un valor alcanzable."
+            )
+
         raise HTTPException(
             status_code=400,
             detail=(
                 f"Solo hay {len(series.time)} muestras en el buffer. "
-                "Se necesitan al menos 40."
+                f"Se necesitan al menos 40.{pista}"
             ),
         )
 
     threshold = test_config_service.step_threshold_pct()
-    post_needed = test_config_service.post_samples()
+
+    # La ventana se dimensiona con el periodo MEDIDO, no con el configurado.
+    post_needed = test_config_service.post_samples(period_s=periodo)
 
     step_detector_service.min_step_delta = threshold
 
@@ -137,7 +153,6 @@ def run_identification(
         )
 
     post_available = len(series.time) - step_index
-    periodo = test_config_service.describe_step_config()["sample_period_s"]
     segundos = post_available * periodo
 
     # Piso duro: por debajo de esto el ajuste no es confiable ni con buena
@@ -171,7 +186,7 @@ def run_identification(
     try:
         result = pipeline_service.process_series(
             series,
-            pre_samples=test_config_service.pre_samples(),
+            pre_samples=test_config_service.pre_samples(period_s=periodo),
             post_samples=min(post_needed, post_available) if truncated else post_needed,
             order=test_config_service.get_order(),
         )
@@ -193,8 +208,62 @@ def run_identification(
 
     result["truncated"] = truncated
     result["requested_post_samples"] = post_needed
+    result["sampling"] = muestreo
+    result["warnings"] = _build_warnings(result, muestreo, periodo, nominal)
 
     state.last_identification_result = result
     state.last_step_index = result.get("step_index")
 
     return result
+
+
+def _build_warnings(
+    result: dict, muestreo: dict, periodo: float, nominal: float
+) -> list[str]:
+    """
+    Avisos sobre la CALIDAD del ajuste, no sobre errores.
+
+    Un modelo puede converger y aun así no describir nada: si la planta responde
+    más rápido de lo que se muestrea, el transitorio cae entre dos muestras, la
+    constante de tiempo se colapsa al mínimo y la función de transferencia queda
+    en una ganancia pura con `tau = 0.0000s`. La ganancia sale bien —solo
+    necesita los extremos— y eso hace que el resultado parezca válido.
+    """
+    avisos: list[str] = []
+
+    if muestreo.get("ratio") and muestreo["ratio"] > 1.5:
+        avisos.append(
+            f"El muestreo real es {muestreo['measured_period_s']} s "
+            f"({muestreo['ratio']}× el configurado de {nominal} s). La lectura "
+            "del PLC no alcanza el ritmo pedido."
+        )
+
+    for modelo in result.get("models", []):
+        tau = modelo.get("tau") or modelo.get("tau1")
+        if tau is None:
+            continue
+
+        if tau <= 1e-5:
+            avisos.append(
+                f"{modelo['model_type'].upper()}: la constante de tiempo salió "
+                "prácticamente nula. La respuesta se completó entre dos muestras, "
+                f"así que con un periodo de {periodo:.2f} s no hay forma de medir "
+                "la dinámica. Solo la ganancia es confiable."
+            )
+        elif tau < 3 * periodo:
+            avisos.append(
+                f"{modelo['model_type'].upper()}: tau ({tau:.3f} s) es menor que "
+                f"3 periodos de muestreo ({3 * periodo:.2f} s). Hacen falta más "
+                "puntos durante el transitorio para que sea confiable."
+            )
+
+        break  # solo el modelo ganador
+
+    ganador = (result.get("models") or [{}])[0]
+    if ganador.get("fit_quality") is not None and ganador["fit_quality"] < 0:
+        avisos.append(
+            f"R² negativo ({ganador['fit_quality'] * 100:.1f} %): el modelo ajusta "
+            "peor que una línea horizontal. No lo uses para sintonizar."
+        )
+
+    return avisos

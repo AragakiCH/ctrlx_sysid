@@ -229,14 +229,21 @@ function plotComparison(time, measured, simulated) {
 
   if (State.charts.cCmp) State.charts.cCmp.destroy();
 
+  const puntos = (serie) =>
+    time.map((t, i) => ({ x: Number(t), y: Number(serie[i]) }));
+
+  // Rango completo, para poder volver a él tras hacer zoom.
+  const tMin = Number(time[0]);
+  const tMax = Number(time[time.length - 1]);
+  State.charts.cCmpRango = { min: tMin, max: tMax };
+
   State.charts.cCmp = new Chart(el, {
     type: "line",
     data: {
-      labels: time.map((v) => Number(v).toFixed(1)),
       datasets: [
         {
           label: "Medido",
-          data: measured,
+          data: puntos(measured),
           borderColor: "#1baf7a",
           borderWidth: 2,
           pointRadius: 0,
@@ -244,7 +251,7 @@ function plotComparison(time, measured, simulated) {
         },
         {
           label: "Modelo",
-          data: simulated,
+          data: puntos(simulated),
           borderColor: "#eb6834",
           borderWidth: 2,
           borderDash: [5, 3],
@@ -257,11 +264,26 @@ function plotComparison(time, measured, simulated) {
       responsive: true,
       maintainAspectRatio: false,
       animation: false,
-      plugins: { legend: { display: false } },
+      parsing: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { mode: "nearest", intersect: false }
+      },
       scales: {
+        // Escala lineal, no de categorías: con las etiquetas como categorías
+        // el zoom solo podría cortar por índice de muestra, y aquí interesa
+        // acotar por SEGUNDOS — es lo que se compara contra el modelo.
         x: {
-          ticks: { color: "#898781", font: { size: 8 }, maxTicksLimit: 6 },
-          grid:  { color: "rgba(0,0,0,0.05)" }
+          type: "linear",
+          min: tMin,
+          max: tMax,
+          ticks: {
+            color: "#898781",
+            font: { size: 8 },
+            maxTicksLimit: 6,
+            callback: (v) => Number(v).toFixed(1)
+          },
+          grid: { color: "rgba(0,0,0,0.05)" }
         },
         y: {
           ticks: { color: "#898781", font: { size: 8 } },
@@ -270,4 +292,126 @@ function plotComparison(time, measured, simulated) {
       }
     }
   });
+
+  activarZoomComparacion(el);
+}
+
+
+/* ==================== ZOOM DEL CHART MEDIDO VS MODELO ==================== */
+/**
+ * Zoom y desplazamiento sobre el eje de tiempo, sin plugins.
+ *
+ * Se implementa a mano en vez de con chartjs-plugin-zoom porque la app corre
+ * embebida en el ctrlX, que no siempre tiene salida a internet: una dependencia
+ * por CDN se caería justo en el equipo donde tiene que funcionar.
+ *
+ * - Rueda           → acerca/aleja alrededor del cursor
+ * - Arrastrar       → desplaza
+ * - Doble clic      → vuelve al rango completo
+ *
+ * Con un ensayo largo importado desde CSV, el escalón ocupa una fracción mínima
+ * del ancho y es imposible juzgar a ojo si el modelo sigue a la planta.
+ */
+function activarZoomComparacion(canvas) {
+  if (canvas.dataset.zoomActivo === "1") return;
+  canvas.dataset.zoomActivo = "1";
+
+  const eje = () => State.charts.cCmp?.options?.scales?.x;
+
+  const aplicar = (min, max) => {
+    const chart = State.charts.cCmp;
+    const rango = State.charts.cCmpRango;
+    if (!chart || !rango) return;
+
+    const anchoTotal = rango.max - rango.min;
+    // Un tope de acercamiento evita quedar entre dos muestras, donde no se ve
+    // ninguna línea y parece que el gráfico se rompió.
+    const anchoMin = anchoTotal / 500;
+
+    if (max - min < anchoMin) return;
+
+    chart.options.scales.x.min = Math.max(rango.min, min);
+    chart.options.scales.x.max = Math.min(rango.max, max);
+    chart.update("none");
+  };
+
+  canvas.addEventListener(
+    "wheel",
+    (ev) => {
+      const chart = State.charts.cCmp;
+      const escala = eje();
+      if (!chart || !escala) return;
+
+      ev.preventDefault();
+
+      const area = chart.chartArea;
+      if (!area) return;
+
+      const min = escala.min;
+      const max = escala.max;
+
+      // Punto bajo el cursor: es el que debe quedarse quieto al hacer zoom.
+      const rect = canvas.getBoundingClientRect();
+      const frac = Math.min(
+        Math.max((ev.clientX - rect.left - area.left) / area.width, 0),
+        1
+      );
+      const centro = min + frac * (max - min);
+
+      const factor = ev.deltaY < 0 ? 0.8 : 1.25;
+
+      aplicar(
+        centro - (centro - min) * factor,
+        centro + (max - centro) * factor
+      );
+    },
+    { passive: false }
+  );
+
+  let arrastrando = false;
+  let xInicial = 0;
+  let rangoInicial = null;
+
+  canvas.addEventListener("mousedown", (ev) => {
+    const escala = eje();
+    if (!escala) return;
+
+    arrastrando = true;
+    xInicial = ev.clientX;
+    rangoInicial = { min: escala.min, max: escala.max };
+    canvas.style.cursor = "grabbing";
+  });
+
+  window.addEventListener("mousemove", (ev) => {
+    if (!arrastrando || !rangoInicial) return;
+
+    const chart = State.charts.cCmp;
+    const area = chart?.chartArea;
+    if (!area) return;
+
+    const ancho = rangoInicial.max - rangoInicial.min;
+    const desplazamiento = ((ev.clientX - xInicial) / area.width) * ancho;
+
+    aplicar(rangoInicial.min - desplazamiento, rangoInicial.max - desplazamiento);
+  });
+
+  window.addEventListener("mouseup", () => {
+    arrastrando = false;
+    rangoInicial = null;
+    canvas.style.cursor = "";
+  });
+
+  canvas.addEventListener("dblclick", () => resetZoomComparacion());
+}
+
+
+/** Devuelve el chart medido-vs-modelo a su rango completo. */
+function resetZoomComparacion() {
+  const chart = State.charts.cCmp;
+  const rango = State.charts.cCmpRango;
+  if (!chart || !rango) return;
+
+  chart.options.scales.x.min = rango.min;
+  chart.options.scales.x.max = rango.max;
+  chart.update("none");
 }

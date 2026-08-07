@@ -230,8 +230,9 @@ class TestRunnerService:
         if was_running:
             # El actuador vuelve a su valor inicial: una parada de emergencia
             # que dejara la planta en el valor del escalón sería peor que no
-            # haber arrancado.
+            # haber arrancado. Y recién después se suelta.
             self._return_to_start()
+            self._release_writer()
 
         with self._lock:
             state = self._state_locked()
@@ -312,6 +313,7 @@ class TestRunnerService:
                 deadline = time.monotonic()
 
         self._return_to_start()
+        self._release_writer()
 
         with self._lock:
             if self._status == STATUS_RUNNING:
@@ -356,6 +358,37 @@ class TestRunnerService:
 
         return None
 
+    def _release_writer(self) -> None:
+        """
+        Suelta el actuador al terminar el ensayo.
+
+        Se llama SIEMPRE después de `_return_to_start()`, nunca antes: primero
+        se deja la planta en el valor inicial y recién entonces se deja de
+        gobernarla.
+
+        Sin esto el escritor queda armado indefinidamente. La variable del
+        actuador suele ser una que también escribe la HMI (`HMI_SP_Local_...`),
+        así que mantenerla tomada después del ensayo deja dos dueños para el
+        mismo dato y el operador no recupera el control hasta reiniciar.
+
+        Armar de nuevo es un acto explícito desde `POST /api/test/writer`.
+        """
+        with self._lock:
+            tenia_writer = self._writer is not None
+            self._writer = None
+
+        if tenia_writer:
+            self._emit(
+                "writer_released",
+                {
+                    "enabled": False,
+                    "reason": (
+                        "El ensayo terminó. El actuador quedó en su valor inicial "
+                        "y la escritura se desarmó."
+                    ),
+                },
+            )
+
     def _abort(self, reason: str) -> None:
         """Corta el ensayo por pérdida de control del actuador."""
         with self._lock:
@@ -367,6 +400,7 @@ class TestRunnerService:
         # Se intenta igual: puede que la conexión se haya recuperado, y dejar
         # el actuador en el valor del escalón es peor que intentarlo.
         self._return_to_start()
+        self._release_writer()
 
         with self._lock:
             state = self._state_locked()

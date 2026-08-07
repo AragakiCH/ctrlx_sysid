@@ -69,6 +69,23 @@ class PLCReader:
         # cada escritura costaría un browse completo cada 200 ms.
         self._node_cache: dict[str, Any] = {}
 
+        # Catálogo de nombres del programa, para los desplegables de la vista.
+        # Se refresca cada `CATALOG_REFRESH_S`, no en cada muestra: es un browse
+        # y no cambia salvo que se cargue otro programa en el PLC.
+        self._variable_names: list[str] = []
+        self._catalog_ts: float = 0.0
+
+        # Origen del reloj del ensayo. Ver `_build_sample`.
+        self._clock_start: Optional[float] = None
+
+        # Diagnóstico del muestreo real, que casi nunca coincide con `period_s`.
+        self._last_sample_monotonic: Optional[float] = None
+        self._last_read_duration_s: Optional[float] = None
+        self._last_interval_s: Optional[float] = None
+
+    # Cada cuánto se vuelve a listar las variables del programa.
+    CATALOG_REFRESH_S = 10.0
+
     # ------------------------------------------------------------------ #
     # Resolución de señales
     # ------------------------------------------------------------------ #
@@ -114,24 +131,107 @@ class PLCReader:
     # Muestreo
     # ------------------------------------------------------------------ #
 
+    def _refresh_catalog_locked(self, program_node) -> None:
+        """Relista los nombres del programa si el catálogo caducó. Con el lock tomado."""
+        now = time.monotonic()
+
+        if self._variable_names and (now - self._catalog_ts) < self.CATALOG_REFRESH_S:
+            return
+
+        try:
+            self._variable_names = self._repo.list_variable_names(program_node)
+            self._catalog_ts = now
+        except Exception:
+            # Si el browse falla se conserva el catálogo anterior: es solo para
+            # poblar desplegables y no vale la pena cortar el muestreo por ello.
+            pass
+
     def _build_sample(self, plc_prg_node) -> dict:
-        # Bajo el lock: comparte socket con las escrituras del ensayo.
+        """
+        Una muestra del PLC.
+
+        Solo se leen las variables **mapeadas a un rol**, no el programa entero.
+        Cada lectura es un viaje de red, así que muestrear todas las variables
+        hacía que el periodo real fuera varias veces el configurado: un ensayo
+        de 20 s terminaba con 20 muestras en vez de 100, y con tan pocos puntos
+        durante el transitorio la constante de tiempo se colapsa a cero.
+
+        El eje de tiempo NO sale del PLC. Se usa un reloj monótono propio y la
+        variable de tiempo del programa se conserva aparte, en `plc_time`, solo
+        como referencia. Un contador de PLC que se reinicia cíclicamente
+        (`IF rTimeSec >= 20 THEN rTimeSec := 0`) produce un eje en diente de
+        sierra: al integrar el modelo aparecen `dt` negativos y el R² se va a
+        valores absurdos aunque la ganancia salga bien.
+        """
+        read_started = time.monotonic()
+
         with self._io_lock:
-            raw_values = self._repo.read_program_values(plc_prg_node)
-        effective_mapping = self._resolve_effective_mapping(raw_values)
+            self._refresh_catalog_locked(plc_prg_node)
+            catalog = list(self._variable_names)
+
+            effective_mapping = resolve_mapping(self.mapping, catalog)
+
+            # Nombres únicos a leer: los de los roles con variable asignada.
+            wanted: list[str] = []
+            for name in effective_mapping.values():
+                if name and name not in wanted:
+                    wanted.append(name)
+
+            raw_values: dict[str, Any] = {}
+            for name in wanted:
+                node = self._resolve_node(name)
+                if node is None:
+                    continue
+                try:
+                    raw_values[name] = self._opc.read_value(node)
+                except Exception as exc:
+                    raw_values[name] = f"READ_ERROR: {exc}"
+
+        read_finished = time.monotonic()
+
+        if self._clock_start is None:
+            self._clock_start = read_finished
+
+        interval = None
+        if self._last_sample_monotonic is not None:
+            interval = read_finished - self._last_sample_monotonic
+
+        self._last_sample_monotonic = read_finished
+        self._last_read_duration_s = read_finished - read_started
+        self._last_interval_s = interval
 
         sample: dict[str, Any] = {
             "timestamp": time.time(),
             "mapping": effective_mapping,
+            # Nombres del programa para los desplegables. `raw` ya no los trae
+            # todos, porque solo se muestrean los roles.
+            "variables": catalog,
+            "read_duration_s": round(self._last_read_duration_s, 4),
+            "sample_interval_s": round(interval, 4) if interval is not None else None,
         }
 
         for role in SIGNAL_ROLES:
             sample[role] = self._value_for_role(raw_values, role, effective_mapping)
 
+        # La variable de tiempo del PLC pasa a ser informativa; el eje real lo
+        # marca el instante de captura.
+        sample["plc_time"] = sample.get("time")
+        sample["time"] = round(read_finished - self._clock_start, 4)
+
         if self.include_raw:
             sample["raw"] = raw_values
 
         return sample
+
+    @property
+    def last_interval_s(self) -> Optional[float]:
+        """Tiempo real entre las dos últimas muestras. `None` si aún no hay dos."""
+        return self._last_interval_s
+
+    @property
+    def last_read_duration_s(self) -> Optional[float]:
+        """Lo que tardó la última lectura OPC UA."""
+        return self._last_read_duration_s
 
     def _resolve_program_node(self):
         return self._repo.resolve_program_node(self.program_name)
@@ -184,10 +284,14 @@ class PLCReader:
             return name
 
         # Sin mapeo explícito hay que mirar qué variables existen de verdad.
+        # Basta el catálogo de nombres: leer sus valores sería un viaje de red
+        # por variable solo para saber cómo se llaman.
         with self._io_lock:
             if self._program_node is None:
                 return None
-            names = list(self._repo.read_program_values(self._program_node).keys())
+
+            self._refresh_catalog_locked(self._program_node)
+            names = list(self._variable_names)
 
         return resolve_mapping(self.mapping, names).get(role)
 
@@ -279,6 +383,13 @@ class PLCReader:
                     self._program_node = program_node
                     self._node_cache.clear()
 
+                # El reloj del ensayo arranca con la conexión, no con el objeto:
+                # entre construir el reader y tener sesión pueden pasar segundos.
+                self._clock_start = None
+                self._last_sample_monotonic = None
+
+                deadline = time.monotonic()
+
                 while not self._stop:
                     sample = self._build_sample(program_node)
 
@@ -288,7 +399,20 @@ class PLCReader:
                         except Exception:
                             pass
 
-                    time.sleep(self.period_s)
+                    # Se duerme hasta el siguiente deadline, no `period_s` fijo.
+                    # Durmiendo el periodo completo tras la lectura, el periodo
+                    # real sería `lectura + period_s`: con lecturas de ~0.8 s el
+                    # muestreo cae a 1 Hz aunque se hayan pedido 5 Hz.
+                    deadline += self.period_s
+                    remaining = deadline - time.monotonic()
+
+                    if remaining > 0:
+                        time.sleep(remaining)
+                    else:
+                        # La lectura ya tardó más que el periodo pedido: no se
+                        # puede ir más rápido, y arrastrar el retraso solo haría
+                        # que el hilo nunca durmiera.
+                        deadline = time.monotonic()
 
             except Exception as exc:
                 print(f"OPC UA FAIL {self.url} -> {exc} | retry en {backoff:.1f}s")

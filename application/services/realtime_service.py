@@ -203,22 +203,34 @@ class RealtimeService:
         clean_sensor = []
         clean_setpoint = []
 
+        # El setpoint es OPCIONAL en la vista. Exigirlo aquí descartaba el
+        # ensayo entero cuando no había ninguna variable asignada a ese rol:
+        # el buffer se veía lleno en los gráficos y el backend reportaba cero
+        # muestras. Solo se exige lo que la identificación necesita de verdad.
         for s in samples:
             t = s.get("time")
             a = s.get(actuator_key)
             y = s.get(sensor_key)
             sp = s.get(setpoint_key)
 
-            if (
+            if not (
                 isinstance(t, (int, float))
                 and isinstance(a, (int, float))
                 and isinstance(y, (int, float))
-                and isinstance(sp, (int, float))
             ):
-                clean_time.append(float(t))
-                clean_actuator.append(float(a))
-                clean_sensor.append(float(y))
-                clean_setpoint.append(float(sp))
+                continue
+
+            # El tiempo tiene que crecer. Si viene de un contador del PLC que se
+            # reinicia cada N segundos, el eje es un diente de sierra: al
+            # integrar el modelo salen `dt` negativos, la respuesta simulada se
+            # dispara y el R² queda en valores absurdos con la ganancia bien.
+            if clean_time and float(t) <= clean_time[-1]:
+                continue
+
+            clean_time.append(float(t))
+            clean_actuator.append(float(a))
+            clean_sensor.append(float(y))
+            clean_setpoint.append(float(sp) if isinstance(sp, (int, float)) else 0.0)
 
         signal_type = samples[-1].get("signal_type") if samples else None
 
@@ -229,6 +241,58 @@ class RealtimeService:
             setpoint=clean_setpoint,
             signal_type=signal_type,
         )
+
+    def measured_period_s(self) -> Optional[float]:
+        """
+        Periodo de muestreo REAL, medido sobre el buffer.
+
+        El periodo configurado en el paso 1 es una intención; el efectivo lo
+        marca cuánto tarda cada lectura OPC UA, que depende del programa y de la
+        red. Dimensionar la ventana de identificación con el nominal cuando el
+        real es cinco veces mayor lleva a pedir muestras que nunca van a existir.
+
+        Se usa la **mediana** de los intervalos: un pico aislado por un hipo de
+        red no debe mover la estimación, cosa que sí haría el promedio.
+        """
+        times = [
+            s.get("time")
+            for s in self._buffer
+            if isinstance(s.get("time"), (int, float))
+        ]
+
+        if len(times) < 3:
+            return None
+
+        deltas = sorted(
+            times[i] - times[i - 1]
+            for i in range(1, len(times))
+            if times[i] > times[i - 1]
+        )
+
+        if not deltas:
+            return None
+
+        mitad = len(deltas) // 2
+        if len(deltas) % 2:
+            return float(deltas[mitad])
+        return float((deltas[mitad - 1] + deltas[mitad]) / 2.0)
+
+    def sampling_report(self, nominal_period_s: Optional[float] = None) -> dict:
+        """Resumen del muestreo para diagnosticar por qué faltan muestras."""
+        measured = self.measured_period_s()
+
+        ratio = None
+        if measured and nominal_period_s:
+            ratio = measured / nominal_period_s
+
+        return {
+            "samples": len(self._buffer),
+            "measured_period_s": round(measured, 4) if measured else None,
+            "nominal_period_s": nominal_period_s,
+            "ratio": round(ratio, 2) if ratio else None,
+            "effective_rate_hz": round(1.0 / measured, 2) if measured else None,
+            "source": self._source,
+        }
 
     def has_enough_samples(self, min_samples: int = 20) -> bool:
         return len(self._buffer) >= min_samples

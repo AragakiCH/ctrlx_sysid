@@ -143,6 +143,22 @@ class IdentificationResult(BaseModel):
     requested_post_samples: int = Field(
         0, description="Muestras de respuesta que pedía la duración configurada"
     )
+    sampling: Optional[dict] = Field(
+        None,
+        description=(
+            "Muestreo real medido sobre el buffer: `measured_period_s`, "
+            "`effective_rate_hz` y `ratio` contra el periodo configurado."
+        ),
+    )
+    warnings: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Avisos sobre la calidad del ajuste. Un modelo puede converger y aun "
+            "así no describir la planta: si el proceso responde más rápido que el "
+            "muestreo, tau se colapsa a cero y queda una ganancia pura que parece "
+            "válida. Conviene mostrarlos junto al resultado."
+        ),
+    )
     window: IdentificationWindow
     models: list[ModelResult] = Field(..., description="Ordenados de mejor a peor R²")
 

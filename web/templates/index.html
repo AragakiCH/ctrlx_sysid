@@ -48,6 +48,15 @@
         <span>Importar</span>
       </button>
       <button
+        class="btn btn-secondary"
+        onclick="reiniciarSesionDeTrabajo()"
+        id="btnReset"
+        title="Descartar el ensayo y los resultados actuales, sin cerrar sesión"
+      >
+        <i class="fa-solid fa-rotate-left"></i>
+        <span>Reiniciar</span>
+      </button>
+      <button
         class="btn btn-logout"
         onclick="logout()"
         id="btnLogout"
@@ -380,6 +389,10 @@
         </div>
       </div>
 
+      <!-- Avisos de calidad del ajuste. Los llena renderIdentWarnings(): son
+           casos donde el modelo converge pero no describe la planta. -->
+      <div id="identWarnings" style="display:none"></div>
+
       <!-- Tab: Modelo -->
       <div id="ident-model">
         <div class="metrics" id="metricsRow" style="display:none">
@@ -418,6 +431,14 @@
                 <div class="legend">
                   <div class="leg"><div class="leg-sq" style="background:#1baf7a"></div>Medido</div>
                   <div class="leg"><div class="leg-sq" style="background:#eb6834"></div>Modelo</div>
+                  <button
+                    type="button"
+                    class="btn-zoom-reset"
+                    onclick="resetZoomComparacion()"
+                    title="Rueda para acercar · arrastrar para desplazar · doble clic para volver"
+                  >
+                    <i class="fa-solid fa-magnifying-glass-minus"></i> Ver todo
+                  </button>
                 </div>
               </div>
               <div class="chart-box h-140">
