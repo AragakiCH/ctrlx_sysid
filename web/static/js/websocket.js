@@ -159,6 +159,50 @@ function renderWriterState(data) {
 }
 
 
+/**
+ * `test_presetting`: la app está llevando la planta al valor inicial.
+ *
+ * Todavía NO se está grabando. Es importante que se vea, porque si no el
+ * usuario pulsa Inicio y durante unos segundos no pasa nada visible: parece
+ * que la app se colgó.
+ */
+function onTestPresetting(data) {
+  const sensor = data?.sensor;
+  const leido = typeof sensor === "number" ? `${sensor.toFixed(2)} %` : "sin lectura";
+
+  setStatus(
+    `Llevando la planta a ${formatNumber(data?.target, 2)} antes de grabar — ` +
+      `sensor ${leido} · ${formatNumber(data?.elapsed_s, 1)} s de ` +
+      `${formatNumber(data?.timeout_s, 0)} s`,
+    "running"
+  );
+}
+
+
+/**
+ * `writer_released`: el ensayo terminó y la app soltó la variable del actuador.
+ *
+ * La casilla NO se desmarca: refleja la intención del usuario, y el backend
+ * rearma solo en el siguiente ensayo. Desmarcarla obligaría a rearmar a mano
+ * cada vez, que es justo lo que se sentía como "el reinicio no genera la señal
+ * del actuador".
+ */
+function onWriterReleased(data) {
+  const badge = document.getElementById("writerBadge");
+  const card  = document.getElementById("writerCard");
+  const hint  = document.getElementById("writerHint");
+
+  if (card) card.classList.remove("armed");
+  if (badge) badge.textContent = data?.intent ? "Armado · en espera" : "Solo dibujo";
+
+  if (hint && data?.intent) {
+    hint.textContent =
+      "El actuador quedó en su valor inicial y la variable volvió a la HMI. " +
+      "El próximo ensayo la toma de nuevo automáticamente.";
+  }
+}
+
+
 /** Consulta el estado al cargar la vista, para reflejar lo que ya haya armado. */
 async function refreshWriterState() {
   try {
@@ -565,6 +609,26 @@ function handleWsMessage(msg) {
       break;
 
     // ---- Ensayo (el reloj lo lleva el backend) ----
+    case "test_presetting":
+      onTestPresetting(msg.data || {});
+      break;
+
+    case "test_settled":
+      setStatus(
+        `Planta estabilizada en ${formatNumber(msg.data?.sensor, 2)} % ` +
+          `tras ${formatNumber(msg.data?.elapsed_s, 1)} s. Empieza la captura.`,
+        "ok"
+      );
+      break;
+
+    case "test_settle_timeout":
+      setStatus(msg.data?.detail || "La planta no llegó a estabilizarse.", "warn");
+      break;
+
+    case "writer_released":
+      onWriterReleased(msg.data || {});
+      break;
+
     case "test_started":
       onTestStarted(msg.data || {});
       break;
@@ -872,12 +936,27 @@ function handleIdentificationResult(data) {
   State.identification.active = models.findIndex((m) => m.model_type === winner);
   if (State.identification.active < 0) State.identification.active = 0;
 
-  // Render
+  // Render.
+  //
+  // El medido tiene que salir de `data.window`, NO del sampleStore completo.
+  // `simulated` cubre solo la ventana de identificación —un recorte alrededor
+  // del escalón, con el tiempo re-basado a 0—, así que emparejarlo con el
+  // tiempo del buffer entero lo dibuja desplazado al principio y cortado a los
+  // pocos segundos: parece que el modelo "no considera" el resto del ensayo
+  // cuando en realidad se está pintando contra el eje equivocado.
   const s = State.sampleStore;
   const type = getSignalType();
-  const measured = type === "pct" ? s.sensor_pct : s.sensor_ma;
+  const ventana = data.window || {};
 
-  renderIdent(models, measured, s.time, winner);
+  const measured = Array.isArray(ventana.sensor) && ventana.sensor.length
+    ? ventana.sensor
+    : (type === "pct" ? s.sensor_pct : s.sensor_ma);
+
+  const tiempo = Array.isArray(ventana.time) && ventana.time.length
+    ? ventana.time
+    : s.time;
+
+  renderIdent(models, measured, tiempo, winner);
   renderBode(models[State.identification.active]);
   renderPID(models, State.identification.active);
 

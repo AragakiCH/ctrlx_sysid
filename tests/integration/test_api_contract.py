@@ -185,6 +185,7 @@ def test_latest_devuelve_el_payload_completo(client, identified):
         "requested_post_samples",
         "sampling",
         "warnings",
+        "baseline",
         "window",
         "models",
     }

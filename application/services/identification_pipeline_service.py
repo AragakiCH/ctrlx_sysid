@@ -111,5 +111,60 @@ class IdentificationPipelineService:
                 "setpoint": window.setpoint,
                 "count": len(window.time),
             },
+            "baseline": self.describe_baseline(window),
             "models": [self.serialize_result(r) for r in results],
+        }
+
+    def describe_baseline(self, window) -> dict:
+        """
+        ¿Estaba la planta en reposo cuando empezó la ventana?
+
+        Todo el ajuste parte de ahí: `initial_y` se toma como el valor de
+        régimen permanente que corresponde a `initial_u`, y la respuesta
+        simulada arranca desde ese punto suponiendo equilibrio. Si el sensor
+        todavía venía moviéndose por un cambio anterior, ese supuesto es falso:
+        la ganancia absorbe la deriva y la constante de tiempo sale desplazada,
+        aunque el R² pueda seguir viéndose alto.
+
+        Es lo que pasa cuando se encadenan escalones sin dejar asentar el
+        proceso entre uno y otro.
+        """
+        actuador = window.actuator
+        sensor = window.sensor
+
+        vacio = {
+            "samples": 0,
+            "drift": 0.0,
+            "response": 0.0,
+            "ratio": 0.0,
+            "settled": True,
+        }
+
+        if len(actuador) < 3:
+            return vacio
+
+        # Primer punto donde el actuador se mueve: ahí termina la línea base.
+        step_in_window = None
+        for i in range(1, len(actuador)):
+            if abs(actuador[i] - actuador[i - 1]) >= self.step_detector_service.min_step_delta:
+                step_in_window = i
+                break
+
+        if step_in_window is None or step_in_window < 2:
+            return vacio
+
+        base = sensor[:step_in_window]
+        deriva = max(base) - min(base)
+        respuesta = abs(sensor[-1] - sensor[0])
+
+        ratio = deriva / respuesta if respuesta > 1e-9 else 0.0
+
+        return {
+            "samples": step_in_window,
+            "drift": round(deriva, 4),
+            "response": round(respuesta, 4),
+            "ratio": round(ratio, 4),
+            # Un 10 % de la respuesta es tolerancia razonable para ruido de
+            # medición; por encima de eso ya no es ruido, es que no asentó.
+            "settled": ratio <= 0.10,
         }

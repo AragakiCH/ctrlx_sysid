@@ -143,6 +143,16 @@ class IdentificationResult(BaseModel):
     requested_post_samples: int = Field(
         0, description="Muestras de respuesta que pedía la duración configurada"
     )
+    baseline: Optional[dict] = Field(
+        None,
+        description=(
+            "Estado de la planta ANTES del escalón: `drift` (cuánto se movió el "
+            "sensor durante la línea base), `response` (recorrido total) y "
+            "`settled`. El ajuste toma el primer valor de la ventana como el "
+            "régimen permanente de la entrada inicial; si el proceso venía "
+            "moviéndose, ese supuesto es falso y la ganancia absorbe la deriva."
+        ),
+    )
     sampling: Optional[dict] = Field(
         None,
         description=(

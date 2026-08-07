@@ -43,6 +43,7 @@ STATUS_STOPPED = "stopped"
 STATUS_ABORTED = "aborted"  # se perdió el control del actuador
 
 # Fase dentro del ensayo.
+PHASE_PRESET = "preset"  # llevando la planta al valor inicial, antes de grabar
 PHASE_BASELINE = "baseline"  # antes del salto: línea base
 PHASE_STEP = "step"  # después del salto
 
@@ -61,15 +62,49 @@ class TestRunnerService:
     # la planta. El contador se reinicia con cada escritura exitosa.
     MAX_CONSECUTIVE_WRITE_ERRORS = 5
 
+    # --- Pre-posicionado antes de grabar ---
+    # Cuánto tiene que estar quieta la planta, y con qué tolerancia, para dar
+    # por buena la línea base. La tolerancia va en % de span, que es la escala
+    # común interna.
+    SETTLE_WINDOW_S = 3.0        # ventana que se mira para juzgar "quieta"
+    SETTLE_TOLERANCE_PCT = 0.5   # recorrido máximo dentro de esa ventana
+    SETTLE_MIN_S = 2.0           # mínimo, aunque el sensor no se mueva nada
+    SETTLE_TIMEOUT_S = 30.0      # a partir de aquí se arranca igual, avisando
+    SETTLE_POLL_S = 0.2
+
     def __init__(
         self,
         test_config_service,
         on_event: Optional[Callable[[dict], None]] = None,
         writer: Optional[Callable[[float], None]] = None,
+        sensor_provider: Optional[Callable[[], Optional[float]]] = None,
+        on_capture_start: Optional[Callable[[], None]] = None,
     ) -> None:
         self._config = test_config_service
         self._on_event = on_event
         self._writer = writer
+
+        # Lectura del sensor (en % de span) para saber cuándo asentó, y aviso
+        # de "empieza la grabación" para que el buffer se limpie en el momento
+        # justo y no arrastre el viaje al punto de partida.
+        self._sensor_provider = sensor_provider
+        self._on_capture_start = on_capture_start
+
+        # Apagado por defecto: quien decide es la API (`POST /api/test/start`),
+        # que sí lo pide activo. Así el runner se puede ejercitar sin esperar la
+        # fase de asentado.
+        self._presettle = False
+        self._settle_window_s = self.SETTLE_WINDOW_S
+        self._settle_tolerance_pct = self.SETTLE_TOLERANCE_PCT
+        self._settle_min_s = self.SETTLE_MIN_S
+        self._settle_timeout_s = self.SETTLE_TIMEOUT_S
+        self._settle_poll_s = self.SETTLE_POLL_S
+
+        # Intención del usuario ("quiero que el ensayo mueva el actuador") y la
+        # fábrica con la que se reconstruye el escritor en cada arranque. Ver
+        # `arm()`: sobreviven a que el escritor se suelte al terminar un ensayo.
+        self._write_intent = writer is not None
+        self._writer_factory: Optional[Callable[[], Callable[[float], None]]] = None
 
         self._lock = threading.RLock()
         self._thread: Optional[threading.Thread] = None
@@ -93,6 +128,39 @@ class TestRunnerService:
     # ------------------------------------------------------------------ #
     # Punto de extensión para la fase 2
     # ------------------------------------------------------------------ #
+
+    def arm(self, factory: Callable[[], Callable[[float], None]]) -> None:
+        """
+        Deja armada la escritura y **recuerda la intención** del usuario.
+
+        La intención y el escritor activo son cosas distintas a propósito. Al
+        terminar cada ensayo el escritor se suelta (`_release_writer`) para que
+        la HMI recupere la variable del actuador, pero la intención sobrevive:
+        si no, tras el primer ensayo la casilla seguiría marcada y el siguiente
+        arranque no movería nada. Es justo lo que se veía al reiniciar —"me deja
+        iniciar un ensayo nuevo, pero no genera la señal del actuador"—.
+
+        Se guarda una **fábrica**, no la función ya construida: así cada ensayo
+        resuelve el escritor contra la sesión OPC UA vigente en ese momento y no
+        contra una que pudo cerrarse y reabrirse por el medio.
+        """
+        with self._lock:
+            self._writer_factory = factory
+            self._write_intent = True
+            self._writer = factory()
+
+    def disarm(self) -> None:
+        """Desarma y olvida la intención: los ensayos vuelven a ser solo dibujo."""
+        with self._lock:
+            self._writer_factory = None
+            self._write_intent = False
+            self._writer = None
+
+    @property
+    def write_intent(self) -> bool:
+        """¿Quiere el usuario que los ensayos muevan el actuador?"""
+        with self._lock:
+            return self._write_intent
 
     def set_writer(self, writer: Optional[Callable[[float], None]]) -> None:
         """
@@ -180,9 +248,18 @@ class TestRunnerService:
     # Ciclo de vida
     # ------------------------------------------------------------------ #
 
-    def start(self) -> dict:
-        """Arranca un ensayo. Devuelve el estado inicial junto con el plan."""
+    def start(self, presettle: Optional[bool] = None) -> dict:
+        """
+        Arranca un ensayo. Devuelve el estado inicial junto con el plan.
+
+        Con `presettle` activo (por defecto) el actuador se lleva primero al
+        valor inicial y se espera a que el sensor deje de moverse; recién
+        entonces empieza la grabación. Requiere escritura armada: sin ella la
+        app no gobierna el actuador y el pre-posicionado no tiene sentido.
+        """
         with self._lock:
+            if presettle is not None:
+                self._presettle = bool(presettle)
             if self._status == STATUS_RUNNING:
                 raise ValueError(
                     "Ya hay un ensayo en curso. Deténlo antes de arrancar otro."
@@ -191,6 +268,12 @@ class TestRunnerService:
             # build_plan lee la config; si es inválida, revienta aquí y no
             # llegamos a arrancar el hilo.
             plan = self.build_plan()
+
+            # Se rearma solo si el usuario lo dejó pedido. El escritor se suelta
+            # al final de cada ensayo para devolverle la variable a la HMI, así
+            # que sin esto el segundo ensayo de la sesión no movería nada.
+            if self._write_intent and self._writer is None and self._writer_factory:
+                self._writer = self._writer_factory()
 
             self._plan = plan
             self._status = STATUS_RUNNING
@@ -242,6 +325,118 @@ class TestRunnerService:
 
         return state
 
+    def _preset_and_settle(self, plan: dict) -> Optional[bool]:
+        """
+        Lleva la planta al valor inicial y espera a que se quede quieta, **antes**
+        de empezar a grabar.
+
+        Devuelve `None` si el ensayo se canceló por el medio, `False` si no
+        había nada que pre-posicionar (sin escritura armada) y `True` si de
+        verdad se esperó a que asentara.
+
+        Sin esta fase el operador tiene que dejar el actuador en el valor inicial
+        a mano antes de pulsar Inicio; si no lo hace, el ensayo graba la planta
+        todavía viniendo del punto anterior. El ajuste toma la primera muestra
+        como el régimen permanente de la entrada inicial, así que esa deriva se
+        la come la ganancia y el modelo describe algo que no ocurrió.
+
+        No basta con escribir el valor y esperar `delay_s`: ese retardo es la
+        línea base que SÍ se graba, y una planta lenta puede tardar mucho más en
+        asentar. Aquí se espera de verdad, mirando el sensor.
+        """
+        provider = self._sensor_provider
+        writer = self._writer
+
+        if writer is None:
+            # Sin escritura la app no gobierna el actuador: no hay nada que
+            # pre-posicionar y la responsabilidad sigue siendo del operador.
+            return False
+
+        objetivo = plan["from_value"]
+
+        try:
+            writer(objetivo)
+        except Exception as exc:
+            self._emit("test_preset_error", {"detail": str(exc)})
+
+        if provider is None:
+            # Sin lectura del sensor no se puede saber si asentó. Se concede un
+            # margen fijo, mejor que arrancar de inmediato.
+            self._stop_flag.wait(self._settle_min_s)
+            return True if not self._stop_flag.is_set() else None
+
+        inicio = time.monotonic()
+        historial: list[tuple[float, float]] = []
+
+        while not self._stop_flag.is_set():
+            transcurrido = time.monotonic() - inicio
+
+            valor = None
+            try:
+                valor = provider()
+            except Exception:
+                pass
+
+            if isinstance(valor, (int, float)):
+                historial.append((transcurrido, float(valor)))
+                # Solo interesa la ventana reciente: que la planta estuviera
+                # quieta hace veinte segundos no dice nada de ahora.
+                historial = [
+                    (t, v) for (t, v) in historial if transcurrido - t <= self._settle_window_s
+                ]
+
+            with self._lock:
+                self._phase = PHASE_PRESET
+                self._command = objetivo
+                self._command_pct = plan["from_value_pct"]
+                self._elapsed_s = transcurrido
+                estado = self._state_locked()
+
+            self._emit(
+                "test_presetting",
+                {
+                    **estado,
+                    "target": objetivo,
+                    "sensor": valor,
+                    "elapsed_s": round(transcurrido, 2),
+                    "timeout_s": self._settle_timeout_s,
+                },
+            )
+
+            asentada = (
+                transcurrido >= self._settle_min_s
+                and len(historial) >= 3
+                and (max(v for _, v in historial) - min(v for _, v in historial))
+                <= self._settle_tolerance_pct
+            )
+
+            if asentada:
+                self._emit(
+                    "test_settled",
+                    {"elapsed_s": round(transcurrido, 2), "sensor": valor},
+                )
+                return True
+
+            if transcurrido >= self._settle_timeout_s:
+                # No se aborta: puede que la planta tenga una deriva propia que
+                # nunca baje de la tolerancia. Se sigue, pero avisando, y el
+                # aviso de línea base no asentada saldrá después si hace falta.
+                self._emit(
+                    "test_settle_timeout",
+                    {
+                        "elapsed_s": round(transcurrido, 2),
+                        "detail": (
+                            f"La planta no se estabilizó en {self._settle_timeout_s:.0f} s. "
+                            "Se arranca igual, pero la línea base puede no estar en reposo."
+                        ),
+                    },
+                )
+                return True
+
+            self._stop_flag.wait(self._settle_poll_s)
+
+        return None  # cancelado
+
     def _run(self) -> None:
         """
         Bucle del ensayo.
@@ -254,6 +449,37 @@ class TestRunnerService:
         plan = self._plan
         if plan is None:
             return
+
+        # Pre-posicionado: la planta llega al valor inicial y se estabiliza
+        # ANTES de que empiece la grabación.
+        hubo_preset = False
+
+        if self._presettle:
+            resultado = self._preset_and_settle(plan)
+            if resultado is None:
+                return  # se canceló durante el asentado
+            hubo_preset = resultado
+
+        if hubo_preset:
+            # El buffer se limpia aquí, no al pulsar Inicio: todo lo capturado
+            # durante el pre-posicionado es la planta viajando al punto de
+            # partida, y meterlo en la ventana de identificación sería
+            # exactamente el problema que esta fase viene a evitar.
+            #
+            # Solo si el pre-posicionado ocurrió de verdad: si no, se respetaría
+            # mal el `clear_buffer=false` de quien arrancó el ensayo.
+            if self._on_capture_start is not None:
+                try:
+                    self._on_capture_start()
+                except Exception:
+                    pass
+
+            # El reloj arranca con la grabación, no con el pre-posicionado.
+            with self._lock:
+                self._monotonic_start = time.monotonic()
+                self._started_at = time.time()
+                self._elapsed_s = 0.0
+                self._phase = PHASE_BASELINE
 
         period = plan["sample_period_s"]
         total = plan["samples"]
@@ -382,9 +608,11 @@ class TestRunnerService:
                 "writer_released",
                 {
                     "enabled": False,
+                    # La intención sigue en pie: el próximo ensayo se rearma solo.
+                    "intent": self.write_intent,
                     "reason": (
                         "El ensayo terminó. El actuador quedó en su valor inicial "
-                        "y la escritura se desarmó."
+                        "y la app soltó la variable."
                     ),
                 },
             )
@@ -453,6 +681,8 @@ class TestRunnerService:
             "actuator_cmd_pct": self._command_pct,
             "phase": self._phase,
             "started_at": self._started_at,
+            "presettle": self._presettle,
+            "write_intent": self._write_intent,
             "writes_enabled": self._writer is not None,
             "write_errors": self._write_errors,
             "consecutive_write_errors": self._consecutive_write_errors,

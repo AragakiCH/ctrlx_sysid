@@ -197,11 +197,28 @@ def broadcast_from_thread(message: dict) -> None:
         pass
 
 
-# Ejecuta el perfil del actuador con su propio reloj. En esta fase solo calcula
-# y publica el valor comandado: no escribe en el PLC (ver set_writer).
+def sensor_percent_now() -> float | None:
+    """Última lectura del sensor en % de span, o None si no hay muestras."""
+    latest = realtime_service.get_latest_sample()
+    if latest is None:
+        return None
+
+    valor = latest.get("sensor_pct")
+    return float(valor) if isinstance(valor, (int, float)) else None
+
+
+# Ejecuta el perfil del actuador con su propio reloj.
+#
+# `sensor_provider` y `on_capture_start` son lo que permite pre-posicionar la
+# planta: el runner lleva el actuador al valor inicial, mira el sensor hasta que
+# deja de moverse y recién entonces limpia el buffer y empieza a grabar. Sin
+# esto la línea base guarda el viaje al punto de partida y el ajuste toma esa
+# deriva como parte de la respuesta al escalón.
 test_runner_service = TestRunnerService(
     test_config_service=test_config_service,
     on_event=broadcast_from_thread,
+    sensor_provider=sensor_percent_now,
+    on_capture_start=lambda: reset_runtime_state(),
 )
 
 

@@ -288,6 +288,13 @@ def start_test(
         True,
         description="Vaciar el buffer y la identificación previa antes de arrancar.",
     ),
+    presettle: bool = Query(
+        True,
+        description=(
+            "Llevar el actuador al valor inicial y esperar a que el sensor se "
+            "estabilice antes de empezar a grabar. Requiere escritura armada."
+        ),
+    ),
 ) -> dict:
     runner = _runner(request)
 
@@ -300,10 +307,13 @@ def start_test(
     if clear_buffer:
         # Se limpia ANTES de arrancar: si se hiciera después, las primeras
         # muestras del ensayo nuevo se borrarían junto con las viejas.
+        #
+        # Con `presettle` el runner vuelve a limpiarlo al terminar de asentar la
+        # planta, que es el momento en que de verdad empieza la grabación.
         request.app.state.reset_runtime_state()
 
     try:
-        return runner.start()
+        return runner.start(presettle=presettle)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -328,8 +338,12 @@ def get_writer(request: Request) -> dict:
     if reader is not None:
         variable = reader.resolve_role_variable("actuator")
 
+    # `enabled` refleja la INTENCIÓN, no si el escritor está construido en este
+    # instante. Entre ensayos la variable se suelta a propósito; si se reportara
+    # el estado interno, la casilla se desmarcaría sola al terminar cada ensayo
+    # y el usuario tendría que rearmarla cada vez.
     return {
-        "enabled": runner.writes_enabled,
+        "enabled": runner.write_intent,
         "role": "actuator",
         "variable": variable,
         "writable": writable,
@@ -370,7 +384,7 @@ def set_writer(body: WriterRequest, request: Request) -> dict:
         )
 
     if not body.enabled:
-        runner.set_writer(None)
+        runner.disarm()
         return {
             "enabled": False,
             "role": "actuator",
@@ -382,13 +396,16 @@ def set_writer(body: WriterRequest, request: Request) -> dict:
     writable, detail = session.check_writable("actuator")
 
     if not writable:
-        runner.set_writer(None)
+        runner.disarm()
         raise HTTPException(status_code=400, detail=detail)
 
     reader = getattr(session, "_reader", None)
     variable = reader.resolve_role_variable("actuator") if reader else None
 
-    runner.set_writer(session.make_writer("actuator"))
+    # Se guarda la FÁBRICA, no el escritor ya construido: al terminar cada
+    # ensayo se suelta la variable para devolvérsela a la HMI, y en el arranque
+    # siguiente se reconstruye contra la sesión OPC UA vigente.
+    runner.arm(lambda: session.make_writer("actuator"))
 
     return {
         "enabled": True,
@@ -396,8 +413,8 @@ def set_writer(body: WriterRequest, request: Request) -> dict:
         "variable": variable,
         "writable": True,
         "detail": (
-            f"Escritura armada sobre '{variable}'. El próximo ensayo va a mover "
-            "el actuador."
+            f"Escritura armada sobre '{variable}'. Cada ensayo va a mover el "
+            "actuador y al terminar devolverá la variable a la HMI."
         ),
     }
 

@@ -231,6 +231,18 @@ def _build_warnings(
     """
     avisos: list[str] = []
 
+    # La planta tiene que estar quieta cuando empieza la ventana: el ajuste
+    # toma `sensor[0]` como el régimen permanente de `actuador[0]`.
+    base = result.get("baseline") or {}
+    if base.get("samples") and not base.get("settled", True):
+        avisos.append(
+            f"El sensor todavía se estaba moviendo antes del escalón: derivó "
+            f"{base['drift']:.2f} % durante la línea base, un {base['ratio'] * 100:.0f} % "
+            f"de la respuesta total. El modelo supone que la planta parte en "
+            "reposo, así que la ganancia absorbe esa deriva. Deja asentar el "
+            "proceso antes del escalón o alarga el retardo del paso 2."
+        )
+
     if muestreo.get("ratio") and muestreo["ratio"] > 1.5:
         avisos.append(
             f"El muestreo real es {muestreo['measured_period_s']} s "
