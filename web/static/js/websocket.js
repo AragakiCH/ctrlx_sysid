@@ -767,10 +767,18 @@ function updateLiveValues(vals) {
  * `State.mappingPending`, que `applyMappingChange` levanta durante el POST.
  */
 function populateVariableDropdowns(sample) {
-  const raw = sample?.raw;
-  if (!raw) return;
+  // El catálogo COMPLETO del programa viaja en `variables`, no en `raw`.
+  //
+  // `raw` solo trae las variables que tienen un rol asignado: se dejó de
+  // muestrear el programa entero porque cada lectura es un viaje de red y eso
+  // hundía el periodo de muestreo. Poblar el desplegable desde `raw` deja al
+  // usuario eligiendo únicamente entre las que YA están elegidas, sin forma de
+  // llegar al resto. El síntoma engaña: si el programa tiene tantas variables
+  // como roles, la lista se ve completa y todo parece normal.
+  const keys = Array.isArray(sample?.variables) && sample.variables.length
+    ? sample.variables
+    : Object.keys(sample?.raw || {});   // backends viejos, sin `variables`
 
-  const keys = Object.keys(raw);
   if (!keys.length) return;
 
   const mapping = sample.mapping || {};
