@@ -65,6 +65,13 @@ class CtrlxOpcUaClient:
 
         self._client: Optional[Client] = None
 
+        # Cache del nodo donde vive el dato. `value_node()` resuelve `2:Value`
+        # con un `get_child`, que es un BROWSE contra el servidor: sin cache se
+        # pagaba en cada lectura, duplicando los viajes de red por variable.
+        # Se vacía en cada (re)conexión: los nodos de una sesión cerrada no
+        # sirven en la siguiente.
+        self._value_node_cache: dict = {}
+
     @staticmethod
     def _opc_host_port(url: str) -> Tuple[str, str]:
         x = url.split("://", 1)[-1]
@@ -193,6 +200,9 @@ class CtrlxOpcUaClient:
                 f"No se pudo conectar al endpoint OPC UA {endpoint_url}: {exc}"
             ) from exc
 
+        # Sesión nueva: los nodos cacheados de la anterior ya no valen.
+        self._value_node_cache.clear()
+
         self._client = client
         return client
 
@@ -227,8 +237,7 @@ class CtrlxOpcUaClient:
             cur = found
         return cur
 
-    @staticmethod
-    def value_node(node):
+    def value_node(self, node):
         """
         Nodo donde vive realmente el dato.
 
@@ -236,14 +245,62 @@ class CtrlxOpcUaClient:
         hijo `2:Value`. En otros servidores la variable es el nodo mismo. Se
         resuelve igual para leer y para escribir: si se escribiera en el objeto
         padre cuando existe el hijo, el servidor rechaza la operación.
+
+        El resultado se cachea. Resolverlo es un `get_child`, o sea un browse:
+        sin cache cada lectura costaba dos viajes de red en vez de uno, y con
+        cinco variables eso son diez viajes por muestra. Es la diferencia entre
+        muestrear a 50 Hz o a 5 Hz con la misma red.
         """
         try:
-            return node.get_child(["2:Value"])
+            clave = node.nodeid
         except Exception:
-            return node
+            clave = None
+
+        if clave is not None and clave in self._value_node_cache:
+            return self._value_node_cache[clave]
+
+        try:
+            resuelto = node.get_child(["2:Value"])
+        except Exception:
+            resuelto = node
+
+        if clave is not None:
+            self._value_node_cache[clave] = resuelto
+
+        return resuelto
+
+    def clear_node_cache(self) -> None:
+        """Invalida los nodos cacheados. Obligatorio tras reconectar."""
+        self._value_node_cache.clear()
 
     def read_value(self, node):
         return self.value_node(node).get_value()
+
+    def read_values(self, nodes: list) -> list:
+        """
+        Lee varios nodos en UNA sola petición al servidor.
+
+        El servicio Read de OPC UA acepta una lista de nodos, así que leer N
+        variables cuesta un viaje de red en lugar de N. Es lo que permite
+        muestrear varias señales sin que el periodo crezca con cada una.
+        """
+        if not nodes:
+            return []
+
+        objetivos = [self.value_node(n) for n in nodes]
+
+        try:
+            return self.client.get_values(objetivos)
+        except Exception:
+            # Algunos servidores no aceptan el Read múltiple. Se cae a lecturas
+            # sueltas para no perder la muestra entera por una sola variable.
+            valores = []
+            for nodo in objetivos:
+                try:
+                    valores.append(nodo.get_value())
+                except Exception as exc:
+                    valores.append(f"READ_ERROR: {exc}")
+            return valores
 
     def is_writable(self, node) -> bool:
         """
