@@ -210,12 +210,32 @@ function selectAlt(i) {
   // 3. Caja G(s)
   renderTransferFunction(selected);
 
-  // 4. Chart Medido vs Modelo (si hay curva simulada + captura)
+  // 4. Chart Medido vs Modelo.
+  //
+  // Se dibuja sobre la MISMA ventana con la que se ajustó, guardada al llegar
+  // el resultado. Antes se usaba el sampleStore completo: `simulated` cubre
+  // solo la ventana (unas decenas de muestras, con el tiempo re-basado a 0) y
+  // el buffer dura todo el ensayo, así que Chart.js emparejaba por índice y el
+  // modelo salía aplastado contra el arranque del eje. El primer render se
+  // veía bien porque ese sí usaba la ventana; se descuadraba en cuanto se
+  // tocaba una card de modelo alternativo.
   if (Array.isArray(selected.simulated) && selected.simulated.length) {
-    const s = State.sampleStore;
-    const type = getSignalType();
-    const measured = type === "pct" ? s.sensor_pct : s.sensor_ma;
-    if (s.time.length) plotComparison(s.time, measured, selected.simulated);
+    const ventana = State.identification.window;
+
+    if (ventana?.time?.length) {
+      plotComparison(ventana.time, ventana.sensor, selected.simulated);
+    } else {
+      // Sin ventana guardada (resultado viejo, o llegó sin `window`) se cae al
+      // buffer, pero recortado a lo que cubre el modelo para no desalinear.
+      const s = State.sampleStore;
+      const type = getSignalType();
+      const measured = type === "pct" ? s.sensor_pct : s.sensor_ma;
+      const n = Math.min(s.time.length, selected.simulated.length);
+
+      if (n) {
+        plotComparison(s.time.slice(0, n), measured.slice(0, n), selected.simulated.slice(0, n));
+      }
+    }
   }
 
   // 5. Diagrama de Bode

@@ -84,13 +84,15 @@ class IdentificationPipelineService:
         if window is None:
             return None
 
+        discarded: list[dict] = []
+
         if order and order != "auto":
             try:
                 results = [self.identification_service.identify_from_series(window, order=order)]
             except Exception:
                 return None
         else:
-            results = self.identification_service.compare_models(window)
+            results, discarded = self.identification_service.compare_models_detailed(window)
 
         if not results:
             return None
@@ -112,6 +114,10 @@ class IdentificationPipelineService:
                 "count": len(window.time),
             },
             "baseline": self.describe_baseline(window),
+            # Modelos que no convergieron, con el motivo. Sin esto simplemente
+            # faltarían tarjetas en la vista y no habría forma de saber si el
+            # modelo no aplicaba o si los datos no daban para ajustarlo.
+            "discarded": discarded,
             "models": [self.serialize_result(r) for r in results],
         }
 

@@ -229,12 +229,36 @@ function plotComparison(time, measured, simulated) {
 
   if (State.charts.cCmp) State.charts.cCmp.destroy();
 
+  // Las tres series tienen que cubrir el MISMO tramo. Si se recorre `time` con
+  // una serie más corta, `serie[i]` es undefined a partir de cierto punto y
+  // Number(undefined) da NaN: Chart.js lo salta sin quejarse y sale un gráfico
+  // creíble pero falso —una curva aplastada contra el arranque del eje—.
+  // Recortar a la longitud común deja el desajuste a la vista en vez de
+  // maquillarlo.
+  const n = Math.min(
+    time?.length || 0,
+    measured?.length || 0,
+    simulated?.length || 0
+  );
+
+  if (!n) return;
+
+  if (time.length !== simulated.length || measured.length !== simulated.length) {
+    console.warn(
+      `plotComparison: series de distinta longitud (tiempo ${time.length}, ` +
+        `medido ${measured.length}, modelo ${simulated.length}). Se recorta a ${n}. ` +
+        `El modelo cubre solo la ventana de identificación: hay que graficarlo ` +
+        `contra esa ventana, no contra el buffer completo.`
+    );
+  }
+
+  const eje = time.slice(0, n);
   const puntos = (serie) =>
-    time.map((t, i) => ({ x: Number(t), y: Number(serie[i]) }));
+    eje.map((t, i) => ({ x: Number(t), y: Number(serie[i]) }));
 
   // Rango completo, para poder volver a él tras hacer zoom.
-  const tMin = Number(time[0]);
-  const tMax = Number(time[time.length - 1]);
+  const tMin = Number(eje[0]);
+  const tMax = Number(eje[n - 1]);
   State.charts.cCmpRango = { min: tMin, max: tMax };
 
   State.charts.cCmp = new Chart(el, {

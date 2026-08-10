@@ -84,7 +84,16 @@ window.State = {
   identification: {
     models: [],     // arreglo normalizado de modelos (FOPDT/SOPDT/Integrating)
     winner: null,   // model_type ("fopdt" | "sopdt" | "integrating")
-    active: 0       // índice del modelo seleccionado en el paso 5
+    active: 0,      // índice del modelo seleccionado en el paso 5
+
+    // Ventana sobre la que se ajustó, tal como la mandó el backend:
+    // { time, actuator, sensor, setpoint, count }.
+    //
+    // Es IMPRESCINDIBLE conservarla: `model.simulated` tiene exactamente
+    // `count` puntos, re-basados a 0. Graficarlo contra el sampleStore
+    // completo (que dura todo el ensayo) desalinea las dos curvas — el
+    // modelo se aplasta contra el inicio del eje.
+    window: null
   },
 
   // ---------- WebSocket ----------

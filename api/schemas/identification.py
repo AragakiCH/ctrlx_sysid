@@ -160,6 +160,15 @@ class IdentificationResult(BaseModel):
             "`effective_rate_hz` y `ratio` contra el periodo configurado."
         ),
     )
+    discarded: list[dict] = Field(
+        default_factory=list,
+        description=(
+            "Modelos que NO convergieron, con `model_type` y `reason`. Si falta "
+            "una tarjeta en la vista, aquí está el motivo: sin esto el modelo "
+            "desaparecía en silencio y no había forma de distinguir «este modelo "
+            "no aplica a estos datos» de «algo se rompió»."
+        ),
+    )
     warnings: list[str] = Field(
         default_factory=list,
         description=(

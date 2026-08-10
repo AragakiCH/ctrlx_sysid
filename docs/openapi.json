@@ -755,6 +755,18 @@
               "title": "Clear Buffer"
             },
             "description": "Vaciar el buffer y la identificación previa antes de arrancar."
+          },
+          {
+            "name": "presettle",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Llevar el actuador al valor inicial y esperar a que el sensor se estabilice antes de empezar a grabar. Requiere escritura armada.",
+              "default": true,
+              "title": "Presettle"
+            },
+            "description": "Llevar el actuador al valor inicial y esperar a que el sensor se estabilice antes de empezar a grabar. Requiere escritura armada."
           }
         ],
         "responses": {
@@ -856,6 +868,28 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/test/reset": {
+      "post": {
+        "tags": [
+          "Ensayo"
+        ],
+        "summary": "Reiniciar la sesión de trabajo",
+        "description": "Deja el backend como recién arrancado, **sin cerrar la sesión OPC UA**:\n\n1. Detiene el ensayo en curso, devolviendo el actuador a su valor inicial y desarmando la escritura.\n2. Sale del modo importado, si estaba activo.\n3. Vacía el buffer de muestras y descarta la identificación.\n\nLa configuración del paso 1 y 2 (mapeo, escalas, escalón) **se conserva**: reiniciar sirve para repetir un ensayo que salió mal, no para volver a configurarlo todo.\n\nEs idempotente.",
+        "operationId": "reset_session_api_test_reset_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestRunState"
                 }
               }
             }
@@ -1502,6 +1536,49 @@
             "title": "Requested Post Samples",
             "description": "Muestras de respuesta que pedía la duración configurada",
             "default": 0
+          },
+          "baseline": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Baseline",
+            "description": "Estado de la planta ANTES del escalón: `drift` (cuánto se movió el sensor durante la línea base), `response` (recorrido total) y `settled`. El ajuste toma el primer valor de la ventana como el régimen permanente de la entrada inicial; si el proceso venía moviéndose, ese supuesto es falso y la ganancia absorbe la deriva."
+          },
+          "sampling": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sampling",
+            "description": "Muestreo real medido sobre el buffer: `measured_period_s`, `effective_rate_hz` y `ratio` contra el periodo configurado."
+          },
+          "discarded": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Discarded",
+            "description": "Modelos que NO convergieron, con `model_type` y `reason`. Si falta una tarjeta en la vista, aquí está el motivo: sin esto el modelo desaparecía en silencio y no había forma de distinguir «este modelo no aplica a estos datos» de «algo se rompió»."
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings",
+            "description": "Avisos sobre la calidad del ajuste. Un modelo puede converger y aun así no describir la planta: si el proceso responde más rápido que el muestreo, tau se colapsa a cero y queda una ganancia pura que parece válida. Conviene mostrarlos junto al resultado."
           },
           "window": {
             "$ref": "#/components/schemas/IdentificationWindow"

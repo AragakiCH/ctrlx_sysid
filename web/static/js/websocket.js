@@ -956,6 +956,14 @@ function handleIdentificationResult(data) {
     ? ventana.time
     : s.time;
 
+  // Se conserva para que `selectAlt` dibuje sobre el MISMO eje. Antes solo
+  // existía aquí, y al cambiar de modelo alternativo se caía al sampleStore
+  // completo: el gráfico se descuadraba en cuanto se tocaba una card.
+  State.identification.window =
+    Array.isArray(ventana.time) && ventana.time.length
+      ? { time: tiempo, sensor: measured, count: tiempo.length }
+      : null;
+
   renderIdent(models, measured, tiempo, winner);
   renderBode(models[State.identification.active]);
   renderPID(models, State.identification.active);

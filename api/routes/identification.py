@@ -278,4 +278,13 @@ def _build_warnings(
             "peor que una línea horizontal. No lo uses para sintonizar."
         )
 
+    # Modelos que no convergieron. Sin esto simplemente falta una tarjeta en la
+    # vista y no hay forma de saber si el modelo no aplicaba a estos datos o si
+    # algo se rompió al ajustarlo.
+    for descartado in result.get("discarded", []):
+        avisos.append(
+            f"{descartado['model_type'].upper()}: no se pudo ajustar — "
+            f"{descartado['reason']}"
+        )
+
     return avisos

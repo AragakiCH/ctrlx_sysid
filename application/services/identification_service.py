@@ -98,25 +98,49 @@ class IdentificationService:
         raise ValueError(f"Orden/modelo no soportado: {order}")
 
     def compare_models(self, series) -> list[IdentificationResult]:
+        """Ajusta los tres modelos y los devuelve rankeados por R²."""
+        results, _ = self.compare_models_detailed(series)
+        return results
+
+    def compare_models_detailed(
+        self, series
+    ) -> tuple[list[IdentificationResult], list[dict]]:
+        """
+        Como `compare_models`, pero devuelve también los modelos DESCARTADOS
+        con su motivo.
+
+        Antes un modelo que fallaba se tragaba con `except: pass` y
+        desaparecía de la vista sin explicación: el usuario veía tres tarjetas
+        en un ensayo y dos en el siguiente, sin manera de saber si el modelo
+        no aplicaba, si los datos no daban, o si algo se había roto.
+        """
         self.signal_processor.validate_identification_window(
             time_data=series.time,
             actuator_data=series.actuator,
             sensor_data=series.sensor,
         )
 
-        results = []
+        results: list[IdentificationResult] = []
+        discarded: list[dict] = []
 
-        for fn in (
-            self.identify_fopdt,
-            self.identify_sopdt,
-            self.identify_integrating,
-        ):
+        candidatos = (
+            ("fopdt", self.identify_fopdt),
+            ("sopdt", self.identify_sopdt),
+            ("integrating", self.identify_integrating),
+        )
+
+        for model_type, fn in candidatos:
             try:
                 results.append(fn(series.time, series.actuator, series.sensor))
-            except Exception:
-                pass
+            except Exception as exc:
+                discarded.append(
+                    {
+                        "model_type": model_type,
+                        "reason": str(exc) or type(exc).__name__,
+                    }
+                )
 
-        return self.model_ranker.rank(results)
+        return self.model_ranker.rank(results), discarded
 
     def is_good_result(self, result: IdentificationResult) -> bool:
         if result.fit_quality < 0.5:
