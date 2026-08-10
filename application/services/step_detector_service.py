@@ -14,41 +14,65 @@ class StepDetectorService:
         Busca la última subida suficientemente grande y devuelve el índice
         donde ARRANCA.
 
-        La comparación es sobre una **ventana deslizante**, no entre muestras
-        consecutivas. Un actuador real casi nunca salta de golpe: la salida de
-        un PID con rate limiter sube en rampa (por ejemplo 0.4 por muestra), y
-        mirando solo deltas consecutivos una subida de 25 unidades pasaría
-        desapercibida. Lo que define el escalón es el cambio acumulado, no la
-        pendiente instantánea.
+        Un actuador real casi nunca salta de golpe: la salida de un PID con
+        rate limiter sube en rampa. Comparar muestras consecutivas deja pasar
+        una subida de 45 % repartida en cientos de muestras, así que lo que
+        define el escalón es el cambio ACUMULADO.
 
-        Devuelve el inicio de la transición porque el tiempo muerto del
-        proceso se mide desde que el actuador EMPIEZA a moverse.
+        El barrido va hacia atrás manteniendo el máximo que queda por delante.
+        No necesita ancho de ventana, y ahí está la diferencia: la versión
+        anterior usaba una ventana deslizante medida en MUESTRAS, topada en 60.
+        A 200 ms eso cubre 12 s y sobra, pero a 20 ms son 1.2 s: una rampa de
+        2.4 s no alcanzaba el umbral dentro de la ventana y el escalón se
+        declaraba inexistente aunque el actuador se hubiera movido el salto
+        completo. El ancho correcto es un TIEMPO, no un número de muestras, y
+        depende de una rampa cuya duración no se conoce de antemano — así que
+        lo mejor es no necesitar ancho.
+
+        Devuelve el pie de la rampa porque el tiempo muerto del proceso se mide
+        desde que el actuador EMPIEZA a moverse.
+
+        `window` se conserva en la firma por compatibilidad; ya no se usa.
         """
         n = len(actuator_data)
         if n < 2:
             return None
 
-        # Ventana proporcional al registro, acotada: cubre rampas de hasta
-        # ~5 % del largo de la serie sin dejar pasar un escalón instantáneo.
-        w = window if window is not None else max(1, min(n // 20, 60))
+        # `peak` es el máximo de actuator_data[i+1:]. Que `peak - valor[i]`
+        # supere el umbral significa que a partir de i el actuador sube al
+        # menos ese salto, sin importar cuánto tarde en hacerlo.
+        peak = actuator_data[n - 1]
+        encontrado = None
 
-        # Umbral de "sigue subiendo" al deshacer la rampa: bien por debajo de
-        # la pendiente de una transición real, por encima del ruido plano.
-        rise_eps = max(self.min_step_delta / max(w, 1) * 0.1, 1e-9)
+        for i in range(n - 2, -1, -1):
+            if peak - actuator_data[i] >= self.min_step_delta:
+                encontrado = i
+                break
+            if actuator_data[i] > peak:
+                peak = actuator_data[i]
 
-        for i in range(n - 1, w - 1, -1):
-            if actuator_data[i] - actuator_data[i - w] < self.min_step_delta:
-                continue
+        if encontrado is None:
+            return None
 
-            # Transición encontrada. Se camina hacia atrás hasta donde el
-            # actuador dejó de subir: ese es el arranque real de la rampa.
-            j = i - w
-            while j > 0 and actuator_data[j] - actuator_data[j - 1] > rise_eps:
-                j -= 1
+        # `encontrado` es el último punto que queda `min_step_delta` por debajo
+        # del máximo posterior: en una rampa eso cae a media subida, no en el
+        # pie. Se retrocede mientras la señal siga subiendo hacia adelante.
+        #
+        # La comparación es estricta (`>`): en la línea base la diferencia
+        # entre muestras es cero, así que el recorrido se detiene solo y no se
+        # come el tramo plano previo.
+        rise_eps = max(self.min_step_delta * 1e-4, 1e-9)
 
-            return j + 1
+        j = encontrado
+        while j > 0 and actuator_data[j] - actuator_data[j - 1] > rise_eps:
+            j -= 1
 
-        return None
+        # El bucle deja `j` en la última muestra de la línea base. Se devuelve
+        # la siguiente: es la primera ya en transición, que es la convención
+        # que usa `SignalProcessor.detect_step_info` para `step_index`. Tenerlas
+        # desfasadas una muestra descuadraría `step_time` y, con él, el tiempo
+        # muerto de todos los modelos.
+        return min(j + 1, n - 1)
 
     def find_previous_step_index(
         self, actuator_data: list[float], before_index: int
