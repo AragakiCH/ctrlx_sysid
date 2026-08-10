@@ -278,6 +278,34 @@ class CtrlxOpcUaClient:
 
     def read_values(self, nodes: list) -> list:
         """
+        Lee varios nodos en UNA sola petición.
+
+        Es la diferencia entre poder muestrear a 20 ms o no. Leyendo variable
+        por variable, cada muestra cuesta un round-trip por nodo; con seis
+        variables y el árbol resolviéndose en cada ciclo se iban ~19 idas y
+        vueltas por muestra, y a 20 ms eso son casi mil peticiones por segundo
+        sobre TCP. Aquí es 1.
+
+        Si el servidor no soporta la lectura por lotes se cae a la individual:
+        más lenta, pero funciona.
+        """
+        if not nodes:
+            return []
+
+        try:
+            return self.client.get_values(nodes)
+        except Exception:
+            return [self._read_one_safe(node) for node in nodes]
+
+    @staticmethod
+    def _read_one_safe(node):
+        try:
+            return node.get_value()
+        except Exception:
+            return None
+
+    def read_values(self, nodes: list) -> list:
+        """
         Lee varios nodos en UNA sola petición al servidor.
 
         El servicio Read de OPC UA acepta una lista de nodos, así que leer N

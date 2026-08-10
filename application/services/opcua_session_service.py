@@ -313,6 +313,38 @@ class OpcUaSessionService:
     # Escritura en el PLC
     # ------------------------------------------------------------------ #
 
+    def set_period(self, period_s: float) -> float:
+        """
+        Cambia el ritmo de lectura del PLC en caliente.
+
+        Sin esto, el campo "Tiempo de muestreo" de la vista solo servía para
+        dimensionar las ventanas de identificación: el lector seguía en el
+        valor con el que se construyó y el muestreo real no bajaba de ahí por
+        más que se pidiera otro. El síntoma era una señal escalonada y el aviso
+        de "el muestreo real es 10× el configurado".
+
+        Devuelve el periodo aplicado.
+        """
+        try:
+            valor = float(period_s)
+        except (TypeError, ValueError):
+            raise ValueError("El tiempo de muestreo debe ser un número.")
+
+        if valor <= 0:
+            raise ValueError("El tiempo de muestreo debe ser mayor que cero.")
+
+        with self._lock:
+            self._period_s = valor
+            if self._reader is not None:
+                self._reader.period_s = valor
+
+        return valor
+
+    @property
+    def period_s(self) -> float:
+        with self._lock:
+            return self._period_s
+
     def check_writable(self, role: str = "actuator") -> tuple[bool, str]:
         """¿Se puede escribir en la variable asignada a ese rol?"""
         with self._lock:

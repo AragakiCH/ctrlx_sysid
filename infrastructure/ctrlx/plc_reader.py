@@ -382,6 +382,7 @@ class PLCReader:
                 with self._io_lock:
                     self._program_node = program_node
                     self._node_cache.clear()
+                    self._repo.invalidate_layout()
 
                 # El reloj del ensayo arranca con la conexión, no con el objeto:
                 # entre construir el reader y tener sesión pueden pasar segundos.
@@ -426,6 +427,7 @@ class PLCReader:
                 with self._io_lock:
                     self._program_node = None
                     self._node_cache.clear()
+                    self._repo.invalidate_layout()
 
                 self._opc.disconnect()
 

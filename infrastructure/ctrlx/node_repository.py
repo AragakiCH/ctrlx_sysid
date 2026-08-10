@@ -114,6 +114,8 @@ class NodeRepository:
 
     def __init__(self, opc_client) -> None:
         self._opc = opc_client
+        # NodeId del programa -> (nombres, nodos de valor). Ver resolve_layout.
+        self._layout_cache: dict[str, tuple[list[str], list]] = {}
 
     def resolve_program_node(self, program_name: str):
         root = self._opc.get_root_node()
@@ -247,9 +249,29 @@ class NodeRepository:
 
         return names
 
-    def read_program_values(self, program_node) -> dict[str, Any]:
-        """Lectura cruda nombre -> valor de todos los hijos del programa."""
-        values: dict[str, Any] = {}
+    def resolve_layout(self, program_node) -> tuple[list[str], list]:
+        """
+        Resuelve UNA vez la estructura del programa: nombres y nodos de valor.
+
+        Es la parte cara y la que no cambia mientras dure la sesión. Antes se
+        rehacía en cada muestra: browse de los hijos, browse del nombre de cada
+        uno y browse de su hijo `2:Value`. Con seis variables eso son unas 13
+        idas y vueltas al servidor por muestra, ANTES de leer un solo dato.
+
+        Se cachea por `NodeId` del programa: si se reconecta, el llamador
+        invalida el cache y se vuelve a resolver.
+        """
+        try:
+            clave = program_node.nodeid.to_string()
+        except Exception:
+            clave = str(id(program_node))
+
+        cacheado = self._layout_cache.get(clave)
+        if cacheado is not None:
+            return cacheado
+
+        nombres: list[str] = []
+        nodos_valor: list = []
 
         for child in program_node.get_children():
             try:
@@ -260,12 +282,40 @@ class NodeRepository:
             if not name:
                 continue
 
-            try:
-                values[name] = self._opc.read_value(child)
-            except Exception as exc:
-                values[name] = f"READ_ERROR: {exc}"
+            nombres.append(name)
+            # El nodo donde vive el dato: en el Datalayer del ctrlX es el hijo
+            # `2:Value`; en otros servidores, la variable misma.
+            nodos_valor.append(self._opc.value_node(child))
 
-        return values
+        layout = (nombres, nodos_valor)
+        self._layout_cache[clave] = layout
+        return layout
+
+    def invalidate_layout(self) -> None:
+        """Tras una reconexión los nodos apuntan a una sesión muerta."""
+        self._layout_cache.clear()
+
+    def read_program_values(self, program_node) -> dict[str, Any]:
+        """
+        Lectura cruda nombre -> valor de todos los hijos del programa.
+
+        Estructura cacheada + una única petición por lotes: 1 round-trip por
+        muestra en vez de uno por variable.
+        """
+        nombres, nodos = self.resolve_layout(program_node)
+
+        if not nombres:
+            return {}
+
+        try:
+            valores = self._opc.read_values(nodos)
+        except Exception as exc:
+            # El fallo es de la conexión, no de una variable suelta: se marcan
+            # todas para que el llamador lo note en vez de recibir un dict a
+            # medias que parecería válido.
+            return {nombre: f"READ_ERROR: {exc}" for nombre in nombres}
+
+        return dict(zip(nombres, valores))
 
 
 def suggest_mapping(variable_names: list[str]) -> dict[str, Optional[str]]:

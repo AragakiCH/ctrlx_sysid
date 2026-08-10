@@ -151,6 +151,15 @@ def get_config(request: Request) -> dict:
     ),
 )
 def set_config(body: TestConfigRequest, request: Request) -> dict:
+    # El periodo no solo dimensiona ventanas: es el ritmo al que el lector
+    # consulta el PLC. Si solo se guardara aquí, el campo de la vista no
+    # tendría ningún efecto sobre el muestreo real.
+    if body.sample_period_s is not None:
+        try:
+            request.app.state.opcua_session_service.set_period(body.sample_period_s)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     try:
         return _service(request).set_step_config(
             step_from=body.step_from,
