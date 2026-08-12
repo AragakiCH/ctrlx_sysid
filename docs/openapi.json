@@ -1133,6 +1133,129 @@
         }
       }
     },
+    "/api/plc/task-cycle": {
+      "get": {
+        "tags": [
+          "Ciclo de tarea"
+        ],
+        "summary": "Estado del ciclo de tarea",
+        "description": "Ciclo que reporta el PLC, si la variable puente es escribible y si el tiempo de muestreo pedido está por debajo del ciclo (sobremuestreo).",
+        "operationId": "get_task_cycle_api_plc_task_cycle_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskCycleResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Ciclo de tarea"
+        ],
+        "summary": "Escribir el ciclo de tarea",
+        "description": "Escribe el ciclo pedido en la variable puente. Se rechaza fuera de `min_cycle_ms`..`max_cycle_ms`: un ciclo demasiado corto deja al PLC sin margen para terminar y el watchdog lo manda a STOP.",
+        "operationId": "set_task_cycle_api_plc_task_cycle_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskCycleSetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskCycleResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Parámetros inválidos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api__schemas__simulation__ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/plc/task-cycle/config": {
+      "post": {
+        "tags": [
+          "Ciclo de tarea"
+        ],
+        "summary": "Configurar la variable puente y la sincronización",
+        "operationId": "configure_task_cycle_api_plc_task_cycle_config_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskCycleConfigRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskCycleResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Parámetros inválidos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api__schemas__simulation__ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "tags": [
@@ -3051,6 +3174,19 @@
               }
             ],
             "title": "Mapping"
+          },
+          "sampling": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sampling",
+            "description": "Cómo se está muestreando:\n\n- `mode`: `subscription` (el servidor muestrea y envía lotes) o `polling` (una petición por muestra).\n- `requested_period_s` / `revised_period_s`: pedido contra concedido. El servidor OPC UA **no está obligado** a aceptar el intervalo pedido.\n- `honored`: si lo concedido está dentro del 25 % de lo pedido.\n- `reason`: por qué se cayó a polling, si aplica.\n\nCon polling el periodo real lo marca la latencia de red, no un valor negociado: ahí `revised_period_s` es el intervalo MEDIDO entre las últimas muestras."
           }
         },
         "type": "object",
@@ -3207,6 +3343,140 @@
           "to_value"
         ],
         "title": "StepPreviewResponse"
+      },
+      "TaskCycleConfigRequest": {
+        "properties": {
+          "variable": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variable",
+            "description": "Variable de PLC_PRG que hace de puente con el intervalo del MainTask. Cadena vacía para desactivar."
+          },
+          "sync_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sync Enabled",
+            "description": "Si al cambiar el tiempo de muestreo se ajusta el ciclo del PLC. Solo baja el ciclo: muestrear más despacio que el PLC es normal y no justifica frenarlo."
+          }
+        },
+        "type": "object",
+        "title": "TaskCycleConfigRequest",
+        "example": {
+          "sync_enabled": true,
+          "variable": "uiTaskCycleMs"
+        }
+      },
+      "TaskCycleResponse": {
+        "properties": {
+          "variable": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variable",
+            "description": "Variable puente configurada"
+          },
+          "sync_enabled": {
+            "type": "boolean",
+            "title": "Sync Enabled",
+            "description": "El tiempo de muestreo arrastra al ciclo del PLC"
+          },
+          "cycle_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cycle Ms",
+            "description": "Ciclo que reporta el PLC. `null` si no se pudo leer."
+          },
+          "writable": {
+            "type": "boolean",
+            "title": "Writable",
+            "description": "La variable puente acepta escritura"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason",
+            "description": "Por qué no se puede escribir"
+          },
+          "oversampling": {
+            "type": "boolean",
+            "title": "Oversampling",
+            "description": "El tiempo de muestreo pedido está por debajo del ciclo de tarea. Llegarían muestras repetidas: la variable todavía no cambió cuando se vuelve a leer."
+          },
+          "min_cycle_ms": {
+            "type": "number",
+            "title": "Min Cycle Ms",
+            "description": "Mínimo que acepta la app"
+          },
+          "max_cycle_ms": {
+            "type": "number",
+            "title": "Max Cycle Ms",
+            "description": "Máximo que acepta la app"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sync_enabled",
+          "writable",
+          "oversampling",
+          "min_cycle_ms",
+          "max_cycle_ms"
+        ],
+        "title": "TaskCycleResponse",
+        "example": {
+          "cycle_ms": 20.0,
+          "max_cycle_ms": 200.0,
+          "min_cycle_ms": 5.0,
+          "oversampling": false,
+          "sync_enabled": true,
+          "variable": "uiTaskCycleMs",
+          "writable": true
+        }
+      },
+      "TaskCycleSetRequest": {
+        "properties": {
+          "cycle_ms": {
+            "type": "number",
+            "title": "Cycle Ms",
+            "description": "Ciclo de tarea pedido, en milisegundos"
+          }
+        },
+        "type": "object",
+        "required": [
+          "cycle_ms"
+        ],
+        "title": "TaskCycleSetRequest",
+        "example": {
+          "cycle_ms": 20.0
+        }
       },
       "TestConfigRequest": {
         "properties": {

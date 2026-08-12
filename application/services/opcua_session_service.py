@@ -345,6 +345,58 @@ class OpcUaSessionService:
         with self._lock:
             return self._period_s
 
+    # Alias explícito: `period_s` es lo que se PIDIÓ, que no siempre es lo que
+    # se consigue. El nombre largo evita confundirlo con el ritmo real.
+    requested_period_s = period_s
+
+    @property
+    def reader(self):
+        """El lector activo, o None. Para lo que necesita hablar con el PLC."""
+        with self._lock:
+            return self._reader
+
+    def sampling_info(self) -> dict:
+        """
+        Cómo se está muestreando: por suscripción o por polling, y a qué ritmo.
+
+        El servidor OPC UA no está obligado a conceder el intervalo pedido. La
+        vista muestra `requested_period_s` contra `revised_period_s` para que
+        el usuario decida si sigue con lo concedido o cambia las condiciones,
+        en vez de descubrirlo cuando la identificación sale pobre.
+        """
+        with self._lock:
+            reader = self._reader
+            pedido = self._period_s
+
+        if reader is None:
+            return {
+                "mode": None,
+                "requested_period_s": pedido,
+                "revised_period_s": None,
+                "honored": None,
+                "reason": "No hay sesión OPC UA activa.",
+            }
+
+        modo = reader.sampling_mode
+        revisado = reader.revised_period_s
+
+        # En polling el ritmo real lo marca la latencia de red, no un valor
+        # que el servidor conceda: se reporta el medido entre muestras.
+        if modo != "subscription":
+            revisado = reader.last_interval_s
+
+        honored = None
+        if revisado:
+            honored = revisado <= pedido * 1.25
+
+        return {
+            "mode": modo,
+            "requested_period_s": pedido,
+            "revised_period_s": round(revisado, 4) if revisado else None,
+            "honored": honored,
+            "reason": reader.subscription_error,
+        }
+
     def check_writable(self, role: str = "actuator") -> tuple[bool, str]:
         """¿Se puede escribir en la variable asignada a ese rol?"""
         with self._lock:
@@ -414,6 +466,10 @@ class OpcUaSessionService:
         has_latest: bool = False,
         has_identification: bool = False,
     ) -> dict:
+        # `sampling_info` toma el lock por su cuenta: llamarla dentro del `with`
+        # funcionaría por ser reentrante, pero deja el bloque más claro fuera.
+        muestreo = self.sampling_info()
+
         with self._lock:
             reader_running = bool(self._reader is not None and self._reader.is_running)
 
@@ -429,6 +485,7 @@ class OpcUaSessionService:
                 "last_login_ts": self._last_login_ts,
                 "program_name": self._current_program_name,
                 "mapping": self._current_mapping,
+                "sampling": muestreo,
             }
 
     @property

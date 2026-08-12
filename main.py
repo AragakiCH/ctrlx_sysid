@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.routes.health import router as health_router
 from api.routes.identification import router as identification_router
 from api.routes.import_data import router as import_router
+from api.routes.task_cycle import router as task_cycle_router
 from api.routes.opcua import router as opcua_router
 from api.routes.simulation import router as test_router
 from application.services.identification_pipeline_service import IdentificationPipelineService
@@ -21,6 +22,7 @@ from application.services.identification_service import IdentificationService
 from application.services.opcua_session_service import OpcUaSessionService
 from application.services.realtime_service import RealtimeService
 from application.services.step_detector_service import StepDetectorService
+from application.services.task_cycle_service import TaskCycleService
 from application.services.test_config_service import TestConfigService
 from application.services.test_runner_service import TestRunnerService
 from websocket.handlers import handle_ws_message
@@ -310,6 +312,8 @@ opcua_session_service = OpcUaSessionService(
     reset_runtime_state=reset_runtime_state,
 )
 
+task_cycle_service = TaskCycleService(opcua_session_service)
+
 app.state.manager = manager
 app.state.realtime_service = realtime_service
 app.state.identification_service = identification_service
@@ -317,6 +321,7 @@ app.state.step_detector_service = step_detector_service
 app.state.pipeline_service = pipeline_service
 app.state.opcua_session_service = opcua_session_service
 app.state.test_config_service = test_config_service
+app.state.task_cycle_service = task_cycle_service
 app.state.test_runner_service = test_runner_service
 # Las rutas la usan para limpiar el buffer al arrancar un ensayo.
 app.state.reset_runtime_state = reset_runtime_state
@@ -327,6 +332,7 @@ app.include_router(opcua_router)
 app.include_router(identification_router)
 app.include_router(test_router)
 app.include_router(import_router)
+app.include_router(task_cycle_router)
 app.include_router(health_router)
 
 @app.on_event("startup")

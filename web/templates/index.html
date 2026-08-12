@@ -186,10 +186,50 @@
         <div class="cols2 mt-12">
           <div>
             <label>Tiempo de muestreo (s)</label>
-            <input type="number" id="sampleTime" value="0.1" min="0.01" max="10" step="0.01" />
+            <input type="number" id="sampleTime" value="0.1" min="0.001" max="10" step="0.001" />
           </div>
           <div class="note-inline">
             <span class="text-muted">Debe coincidir con el ciclo de tarea del ctrlX</span>
+          </div>
+        </div>
+
+        <!-- Ritmo REAL. El servidor OPC UA no está obligado a conceder el
+             intervalo pedido, y por polling el techo lo pone la latencia de
+             red. Se muestra para que la diferencia no se descubra recién
+             cuando la identificación sale pobre. -->
+        <div class="sampling-real" id="samplingReal" hidden>
+          <i class="fa-solid fa-gauge-high sampling-icon"></i>
+          <div class="sampling-body">
+            <div class="sampling-head" id="samplingHead">—</div>
+            <div class="sampling-detail" id="samplingDetail"></div>
+          </div>
+        </div>
+
+        <!-- Ciclo del MainTask. El intervalo real vive en la configuración de
+             tareas del proyecto de ctrlX y NO es una variable del programa: no
+             hay nodo OPC UA que escribir. Se trabaja sobre una variable puente
+             que el código IEC del PLC lee para ajustar el intervalo.
+             Ver docs/CICLO_DE_TAREA.md. -->
+        <div class="cols2 mt-12">
+          <div>
+            <label>Variable del ciclo de tarea (opcional)</label>
+            <select id="varTaskCycle">
+              <option value="">— sin vincular —</option>
+            </select>
+          </div>
+          <div class="note-inline">
+            <label class="check-inline" for="syncTaskCycle">
+              <input type="checkbox" id="syncTaskCycle" />
+              <span>Bajar el ciclo del PLC si el muestreo lo exige</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="sampling-real" id="taskCycleBox" hidden>
+          <i class="fa-solid fa-microchip sampling-icon"></i>
+          <div class="sampling-body">
+            <div class="sampling-head" id="taskCycleHead">—</div>
+            <div class="sampling-detail" id="taskCycleDetail"></div>
           </div>
         </div>
       </div>
@@ -558,6 +598,8 @@
   <script src="/static/js/export.js"></script>
   <script src="/static/js/websocket.js"></script>
   <script src="/static/js/test_config.js"></script>
+  <script src="/static/js/sampling_status.js"></script>
+  <script src="/static/js/task_cycle.js"></script>
   <script src="/static/js/import_data.js"></script>
   <script src="/static/js/main.js"></script>
 </body>

@@ -402,6 +402,13 @@ Es idempotente: sin sesión activa igual responde `ok: true`.
     "sensor": "rSensor",
     "setpoint": "rSetPoint",
     "signal_type": "uiSignalType"
+  },
+  "sampling": {
+    "mode": "subscription",
+    "requested_period_s": 0.02,
+    "revised_period_s": 0.02,
+    "honored": true,
+    "reason": null
   }
 }
 ```
@@ -410,6 +417,37 @@ Es idempotente: sin sesión activa igual responde `ok: true`.
 > credenciales cargadas; `connected` que el hilo de lectura está vivo *ahora mismo*.
 > Si se cae la red, `authenticated` sigue en `true` mientras el lector reintenta con
 > backoff exponencial (1 s, 2 s, 4 s... hasta 30 s).
+
+#### El bloque `sampling`
+
+El "Tiempo de muestreo" de la vista es una **petición**, no un hecho. Este bloque
+dice qué está pasando de verdad.
+
+| Campo | Significado |
+|---|---|
+| `mode` | `subscription` o `polling`. `null` si no hay sesión. |
+| `requested_period_s` | Lo que se pidió desde la vista. |
+| `revised_period_s` | Lo real. Por suscripción, lo que **concedió** el servidor; por polling, el intervalo **medido** entre las últimas muestras. |
+| `honored` | `true` si lo real está dentro del 25 % de lo pedido. |
+| `reason` | Por qué se cayó a polling, si aplica. |
+
+**Por qué existen dos modos.** Con *polling* cada muestra cuesta un viaje completo
+de ida y vuelta, así que el periodo nunca puede bajar de la latencia de red: pedir
+20 ms sobre un enlace de 64 ms da 64 ms, sin que nada falle ni avise. Con una
+*suscripción* el reparto se invierte — el ctrlX muestrea cada `SamplingInterval`
+(puede bajar al ciclo de tarea del PLC), acumula en una cola y envía el lote entero
+cada `PublishingInterval` — así que el ritmo lo marca el PLC y no la red. Ahí sí se
+llega a 10-20-30 ms.
+
+El lector **siempre intenta la suscripción primero** y cae a polling si el servidor
+no la acepta, sin interrumpir el trabajo. Cambiar el tiempo de muestreo con una
+suscripción abierta la **reabre** con el nuevo intervalo: a diferencia del polling,
+el intervalo se negocia al abrirla y no se puede cambiar en caliente.
+
+El servidor OPC UA **no está obligado** a conceder el intervalo pedido. Cuando no
+lo hace, la app lo dice en la vista y deja la decisión al usuario en vez de
+corregirlo por su cuenta: subir el tiempo de muestreo a lo concedido, o seguir
+sabiendo que la curva tendrá menos puntos de los previstos.
 
 ---
 

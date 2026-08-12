@@ -12,6 +12,10 @@ from infrastructure.ctrlx.node_repository import (
     resolve_mapping,
 )
 from infrastructure.ctrlx.opcua_client import CtrlxOpcUaClient
+from infrastructure.ctrlx.opcua_subscription import (
+    OpcUaSampler,
+    SubscriptionNotSupported,
+)
 
 
 class PLCReader:
@@ -68,6 +72,27 @@ class PLCReader:
         # Cache nombre -> nodo. Buscar el hijo recorriendo todo el programa en
         # cada escritura costaría un browse completo cada 200 ms.
         self._node_cache: dict[str, Any] = {}
+
+        # Muestreo por suscripción. Es la única forma de bajar de la latencia
+        # de red: con polling cada muestra cuesta un viaje de ida y vuelta, así
+        # que el periodo nunca puede ser menor que el RTT. Si el servidor no la
+        # acepta se sigue por polling sin interrumpir el trabajo.
+        self._sampler: Optional[OpcUaSampler] = None
+        self._sampling_mode: str = "polling"
+        self._requested_period_s: Optional[float] = None
+        self._revised_period_s: Optional[float] = None
+        self._last_subscription_sample: Optional[float] = None
+        # Ancla para pasar los timestamps del servidor al reloj local. Ver
+        # `_anclar_reloj_del_servidor`.
+        self._sub_time_offset: Optional[float] = None
+        # ¿Llegó alguna vez una muestra por esta suscripción? Distingue "se
+        # quedó muda a mitad" de "nunca arrancó", que se arreglan distinto.
+        self._subscription_delivered = False
+        # Se apaga tras comprobar que en este servidor las suscripciones no
+        # entregan nada. Sin esto la reconexión las reintenta para siempre y
+        # la aplicación se queda sin datos en vez de caer a polling.
+        self._subscription_disabled = False
+        self._subscription_error: Optional[str] = None
 
         # Catálogo de nombres del programa, para los desplegables de la vista.
         # Se refresca cada `CATALOG_REFRESH_S`, no en cada muestra: es un browse
@@ -188,16 +213,37 @@ class PLCReader:
                     raw_values[name] = f"READ_ERROR: {exc}"
 
         read_finished = time.monotonic()
+        self._last_read_duration_s = read_finished - read_started
 
+        return self._compose_sample(
+            raw_values=raw_values,
+            catalog=catalog,
+            effective_mapping=effective_mapping,
+            captured_at=read_finished,
+        )
+
+    def _compose_sample(
+        self,
+        raw_values: dict,
+        catalog: list[str],
+        effective_mapping: dict,
+        captured_at: float,
+    ) -> dict:
+        """
+        Arma la muestra a partir de los valores crudos.
+
+        Compartida por las dos rutas de muestreo —polling y suscripción— para
+        que el resto de la aplicación reciba exactamente la misma forma sin
+        importar cómo se obtuvieron los datos.
+        """
         if self._clock_start is None:
-            self._clock_start = read_finished
+            self._clock_start = captured_at
 
         interval = None
         if self._last_sample_monotonic is not None:
-            interval = read_finished - self._last_sample_monotonic
+            interval = captured_at - self._last_sample_monotonic
 
-        self._last_sample_monotonic = read_finished
-        self._last_read_duration_s = read_finished - read_started
+        self._last_sample_monotonic = captured_at
         self._last_interval_s = interval
 
         sample: dict[str, Any] = {
@@ -206,7 +252,12 @@ class PLCReader:
             # Nombres del programa para los desplegables. `raw` ya no los trae
             # todos, porque solo se muestrean los roles.
             "variables": catalog,
-            "read_duration_s": round(self._last_read_duration_s, 4),
+            "sampling_mode": self._sampling_mode,
+            "read_duration_s": (
+                round(self._last_read_duration_s, 4)
+                if self._last_read_duration_s is not None
+                else None
+            ),
             "sample_interval_s": round(interval, 4) if interval is not None else None,
         }
 
@@ -216,7 +267,7 @@ class PLCReader:
         # La variable de tiempo del PLC pasa a ser informativa; el eje real lo
         # marca el instante de captura.
         sample["plc_time"] = sample.get("time")
-        sample["time"] = round(read_finished - self._clock_start, 4)
+        sample["time"] = round(captured_at - self._clock_start, 4)
 
         if self.include_raw:
             sample["raw"] = raw_values
@@ -232,6 +283,279 @@ class PLCReader:
     def last_read_duration_s(self) -> Optional[float]:
         """Lo que tardó la última lectura OPC UA."""
         return self._last_read_duration_s
+
+    # ------------------------------------------------------------------ #
+    # Muestreo por suscripción
+    # ------------------------------------------------------------------ #
+
+    @property
+    def sampling_mode(self) -> str:
+        """`subscription` o `polling`."""
+        return self._sampling_mode
+
+    @property
+    def requested_period_s(self) -> Optional[float]:
+        return self._requested_period_s
+
+    @property
+    def revised_period_s(self) -> Optional[float]:
+        """Periodo que el servidor concedió. Puede ser mayor que el pedido."""
+        return self._revised_period_s
+
+    @property
+    def subscription_error(self) -> Optional[str]:
+        """Por qué no se pudo suscribir, si se cayó a polling."""
+        return self._subscription_error
+
+    def _try_subscription(self, program_node) -> bool:
+        """
+        Intenta muestrear por suscripción. Devuelve False si hay que usar polling.
+
+        No lanza: perder la suscripción es una degradación, no un error fatal.
+        El trabajo sigue con polling y la vista muestra qué modo está activo.
+        """
+        # Se cierra la anterior antes de abrir otra: este método se vuelve a
+        # llamar al cambiar el periodo, y sin esto quedaría una suscripción
+        # huérfana publicando contra un agrupador que ya nadie lee.
+        if self._sampler is not None:
+            self._sampler.stop()
+
+        self._sampler = None
+        self._sampling_mode = "polling"
+        self._revised_period_s = None
+        self._subscription_error = None
+        self._requested_period_s = self.period_s
+        self._subscription_delivered = False
+
+        try:
+            with self._io_lock:
+                self._refresh_catalog_locked(program_node)
+                catalog = list(self._variable_names)
+                effective_mapping = resolve_mapping(self.mapping, catalog)
+
+                # Solo los roles con variable asignada: suscribir el programa
+                # entero multiplicaría el tráfico sin aportar nada.
+                nodos: dict[str, Any] = {}
+                for nombre in effective_mapping.values():
+                    if not nombre or nombre in nodos:
+                        continue
+                    node = self._resolve_node(nombre)
+                    if node is not None:
+                        nodos[nombre] = self._opc.value_node(node)
+
+            if not nodos:
+                self._subscription_error = "Ninguna variable mapeada existe en el PLC."
+                return False
+
+            sampler = OpcUaSampler(self._opc.client, nodos)
+
+            def entregar(parcial: dict) -> None:
+                self._on_subscription_sample(parcial, catalog, effective_mapping)
+
+            revisado = sampler.start(self.period_s, entregar)
+
+            self._sampler = sampler
+            self._sampling_mode = "subscription"
+            self._revised_period_s = revisado
+            self._last_subscription_sample = time.monotonic()
+
+            print(
+                f"[SUB] Activa — pedido {self.period_s * 1000:.0f} ms, "
+                f"concedido {revisado * 1000:.0f} ms, "
+                f"{sampler.monitored_count}/{len(nodos)} variables aceptadas: "
+                f"{', '.join(nodos)}"
+            )
+            return True
+
+        except SubscriptionNotSupported as exc:
+            self._subscription_error = str(exc)
+            print(f"[SUB] No disponible, se usa polling: {exc}")
+            return False
+
+        except Exception as exc:
+            # El `try` cubre TODO el montaje, incluida la línea que lo reporta.
+            #
+            # Antes terminaba justo antes de esas líneas, así que un fallo ahí
+            # —con la suscripción ya creada— salía al bucle exterior, que lo
+            # trataba como una caída de red: desconectar, esperar, reconectar,
+            # repetir. La aplicación no recibía ni una muestra y el log decía
+            # "OPC UA FAIL", apuntando al PLC en vez de al código.
+            #
+            # La regla es que nada de la ruta de suscripción pueda impedir que
+            # se lea por polling, que siempre funciona.
+            self._subscription_error = f"{type(exc).__name__}: {exc}"
+            print(f"[SUB] Falló, se usa polling: {type(exc).__name__}: {exc}")
+
+            if self._sampler is not None:
+                try:
+                    self._sampler.stop()
+                except Exception:
+                    pass
+
+            self._sampler = None
+            self._sampling_mode = "polling"
+            return False
+
+    def _anclar_reloj_del_servidor(self, server_ts: Optional[float]) -> float:
+        """
+        Pasa un `SourceTimestamp` del PLC al reloj local conservando su espaciado.
+
+        Es la pieza que hace útil la suscripción. El servidor publica en LOTES:
+        con 60 ms de muestreo manda diez muestras juntas cada 600 ms. Si el eje
+        de tiempo se construye con el instante de LLEGADA, esas diez muestras
+        caen todas en el mismo momento y el eje sale como una escalera —diez
+        puntos en t=0, salto a t=0.6, otros diez— en vez de un punto cada 60 ms.
+
+        Sobre esa escalera, la identificación lee mal el tiempo muerto y la
+        constante de tiempo, que es justo lo que se estaba tratando de mejorar.
+
+        Los timestamps del servidor sí vienen espaciados 60 ms exactos. Se les
+        aplica un desfase fijo, calculado una sola vez, para llevarlos al mismo
+        origen que `time.monotonic()`: así conviven con el polling y con el
+        reloj del ensayo sin mezclar dominios.
+        """
+        if server_ts is None:
+            return time.monotonic()
+
+        if self._sub_time_offset is None:
+            self._sub_time_offset = time.monotonic() - server_ts
+
+        return server_ts + self._sub_time_offset
+
+    def _on_subscription_sample(
+        self, parcial: dict, catalog: list[str], effective_mapping: dict
+    ) -> None:
+        """Convierte lo que entrega el agrupador en una muestra completa."""
+        self._last_subscription_sample = time.monotonic()
+        self._subscription_delivered = True
+
+        sample = self._compose_sample(
+            raw_values=parcial.get("raw", {}),
+            catalog=catalog,
+            effective_mapping=effective_mapping,
+            captured_at=self._anclar_reloj_del_servidor(parcial.get("timestamp")),
+        )
+
+        if self.on_sample:
+            try:
+                self.on_sample(sample)
+            except Exception:
+                pass
+
+    def muestrear_por_suscripcion(self, program_node) -> bool:
+        """
+        Lleva el muestreo por suscripción mientras se pueda.
+
+        Devuelve True si la suscripción se encargó del trabajo, y False si hay
+        que caer a polling.
+        """
+        if self._subscription_disabled or not self._try_subscription(program_node):
+            return False
+
+        while not self._stop:
+            motivo = self._vigilar_suscripcion()
+
+            if motivo == "muda":
+                # Se creó pero nunca entregó nada. Reintentarla es el bucle que
+                # deja la aplicación sin datos: mejor apagarla y usar polling,
+                # que es más lento pero funciona.
+                self._subscription_disabled = True
+                self._sampling_mode = "polling"
+
+                if self._sampler is not None:
+                    self._sampler.stop()
+                    self._sampler = None
+
+                print(f"[SUB] Desactivada: {self._subscription_error}")
+                return False
+
+            if motivo != "periodo":
+                return True
+
+            # El periodo se cambió en la vista. Una suscripción se negocia con
+            # un intervalo fijo al abrirla: a diferencia del polling, que lee
+            # `period_s` en cada vuelta, aquí no basta con cambiar el atributo.
+            # Sin reabrir, mover el campo de 100 ms a 20 ms no haría nada y el
+            # aviso de la vista seguiría mostrando el ritmo viejo.
+            if not self._try_subscription(program_node):
+                return False
+
+        return True
+
+    def _vigilar_suscripcion(self) -> Optional[str]:
+        """
+        Espera mientras la suscripción entrega muestras.
+
+        Devuelve `"periodo"` si hay que reabrirla con otro intervalo, `"muda"`
+        si nunca entregó nada, o None si se está parando.
+
+        Los dos silencios no son el mismo problema:
+
+        * **Se quedó muda a mitad**: el servidor dejó de publicar o la sesión
+          murió por debajo. Reconectar arregla eso, así que se lanza.
+        * **Nunca entregó nada**: el servidor aceptó la suscripción pero no
+          publica. Reconectar solo repite el mismo resultado, y mientras tanto
+          la aplicación no recibe ni una muestra. Ahí hay que caer a polling.
+
+        Sin esta distinción el síntoma es un bucle de "dejó de entregar
+        muestras / retry" que parece un problema de red y deja la app vacía.
+        """
+        periodo = self._revised_period_s or self.period_s
+
+        # El primer lote tarda un PublishingInterval entero, que es varias
+        # veces el periodo de muestreo. Se da margen de sobra para no declarar
+        # muda una suscripción que solo estaba arrancando.
+        tolerancia_arranque = max(6.0, periodo * 100)
+        tolerancia_corriendo = max(3.0, periodo * 50)
+
+        while not self._stop:
+            time.sleep(0.2)
+
+            if self._sampler is None or not self._sampler.is_active:
+                return None
+
+            if self.period_s != self._requested_period_s:
+                return "periodo"
+
+            ultimo = self._last_subscription_sample or time.monotonic()
+            silencio = time.monotonic() - ultimo
+
+            if not self._subscription_delivered:
+                if silencio > tolerancia_arranque:
+                    self._subscription_error = (
+                        f"El servidor aceptó la suscripción pero no publicó "
+                        f"ninguna muestra en {tolerancia_arranque:.0f} s."
+                        + self._pista_de_suscripcion_muda()
+                    )
+                    return "muda"
+                continue
+
+            if silencio > tolerancia_corriendo:
+                raise RuntimeError(
+                    f"La suscripción dejó de entregar muestras "
+                    f"({tolerancia_corriendo:.0f} s sin datos)."
+                )
+
+        return None
+
+    def _pista_de_suscripcion_muda(self) -> str:
+        """
+        Añade la causa concreta cuando se puede saber.
+
+        python-opcua marca `has_unknown_handlers` si llegaron notificaciones
+        con un ClientHandle que no reconoce. Eso separa dos culpables muy
+        distintos: el servidor no publica, o publica y nosotros no sabemos
+        encaminar lo que manda.
+        """
+        sub = getattr(self._sampler, "_subscription", None)
+
+        if getattr(sub, "has_unknown_handlers", False):
+            return (
+                " El servidor SÍ publicó, pero con identificadores que el "
+                "cliente no reconoce."
+            )
+
+        return " Se usará polling."
 
     def _resolve_program_node(self):
         return self._repo.resolve_program_node(self.program_name)
@@ -302,12 +626,24 @@ class PLCReader:
         Se consulta antes de armar la escritura para poder avisar en la vista,
         en lugar de descubrir a mitad del ensayo que el actuador no obedece.
         """
+        variable_name = self.resolve_role_variable(role)
+        if not variable_name and self.is_running:
+            return False, f"No hay ninguna variable asignada al rol '{role}'."
+
+        return self.can_write_variable(variable_name)
+
+    def can_write_variable(self, variable_name: Optional[str]) -> tuple[bool, str]:
+        """
+        Igual que `can_write_role` pero apuntando a una variable por nombre.
+
+        Existe para lo que no es una señal del ensayo —el ciclo de tarea, por
+        ejemplo—: son variables que no tienen rol pero se escriben igual.
+        """
         if not self.is_running:
             return False, "El lector del PLC no está conectado."
 
-        variable_name = self.resolve_role_variable(role)
         if not variable_name:
-            return False, f"No hay ninguna variable asignada al rol '{role}'."
+            return False, "No se indicó ninguna variable."
 
         with self._io_lock:
             if self._program_node is None:
@@ -345,6 +681,13 @@ class PLCReader:
         if not variable_name:
             raise RuntimeError(f"No hay ninguna variable asignada al rol '{role}'.")
 
+        self.write_variable_value(variable_name, value)
+
+    def write_variable_value(self, variable_name: str, value: float) -> None:
+        """Escribe en una variable por nombre, sin pasar por los roles."""
+        if not variable_name:
+            raise RuntimeError("No se indicó ninguna variable.")
+
         with self._io_lock:
             if self._program_node is None:
                 raise RuntimeError("Sin conexión con el PLC.")
@@ -356,6 +699,24 @@ class PLCReader:
                 )
 
             self._opc.write_value(node, value)
+
+    def read_variable_value(self, variable_name: str):
+        """Lee una variable por nombre. Devuelve None si no se puede."""
+        if not variable_name:
+            return None
+
+        with self._io_lock:
+            if self._program_node is None:
+                return None
+
+            node = self._resolve_node(variable_name)
+            if node is None:
+                return None
+
+            try:
+                return self._opc.value_node(node).get_value()
+            except Exception:
+                return None
 
     # ------------------------------------------------------------------ #
     # Ciclo de vida
@@ -388,6 +749,15 @@ class PLCReader:
                 # entre construir el reader y tener sesión pueden pasar segundos.
                 self._clock_start = None
                 self._last_sample_monotonic = None
+                # El ancla se recalcula por conexión: tras reconectar, el
+                # desfase viejo mandaría las muestras al pasado.
+                self._sub_time_offset = None
+
+                # Primero se intenta la suscripción: es la única forma de
+                # muestrear por debajo de la latencia de red. Si el servidor no
+                # la acepta se sigue por polling, que siempre funciona.
+                if self.muestrear_por_suscripcion(program_node):
+                    continue
 
                 deadline = time.monotonic()
 
@@ -421,6 +791,16 @@ class PLCReader:
                 backoff = min(backoff * 2.0, max_backoff)
 
             finally:
+                # La suscripción se cierra ANTES que la sesión: borrarla con el
+                # socket ya cerrado deja el hilo interno de python-opcua
+                # esperando una respuesta que no va a llegar.
+                if self._sampler is not None:
+                    self._sampler.stop()
+                    self._sampler = None
+
+                self._sampling_mode = "polling"
+                self._revised_period_s = None
+
                 # Se invalida ANTES de desconectar: si no, una escritura podría
                 # colarse con un nodo que ya apunta a una sesión cerrada y
                 # fallar con un error incomprensible.

@@ -294,6 +294,22 @@ class StatusResponse(BaseModel):
     last_login_ts: Optional[float] = Field(None, description="Epoch UNIX del último login")
     program_name: Optional[str]
     mapping: Optional[dict[str, Optional[str]]]
+    sampling: Optional[dict] = Field(
+        None,
+        description=(
+            "Cómo se está muestreando:\n\n"
+            "- `mode`: `subscription` (el servidor muestrea y envía lotes) o "
+            "`polling` (una petición por muestra).\n"
+            "- `requested_period_s` / `revised_period_s`: pedido contra "
+            "concedido. El servidor OPC UA **no está obligado** a aceptar el "
+            "intervalo pedido.\n"
+            "- `honored`: si lo concedido está dentro del 25 % de lo pedido.\n"
+            "- `reason`: por qué se cayó a polling, si aplica.\n\n"
+            "Con polling el periodo real lo marca la latencia de red, no un "
+            "valor negociado: ahí `revised_period_s` es el intervalo MEDIDO "
+            "entre las últimas muestras."
+        ),
+    )
 
     model_config = {
         "json_schema_extra": {

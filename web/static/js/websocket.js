@@ -39,10 +39,19 @@ function ensureWebSocket() {
  * escalón se aplicaría tarde o nunca — y porque cuando el backend escriba en
  * el PLC tiene que ser ese mismo reloj el que mande.
  */
-async function startCapture() {
+async function startCapture(forzarSinEscritura = false) {
   // El WS tiene que estar abierto ANTES del start: si no, se pierden los
   // primeros ticks (y el test_started con el plan).
   ensureWebSocket();
+
+  // Chequeo previo: un ensayo con la escritura desarmada corre entero sin
+  // mover el actuador. La curva "Comandado" sube y la "Leído del PLC" se
+  // queda plana, y no hay nada que identificar — pero eso solo se descubre
+  // dos minutos después, cuando el ensayo ya terminó.
+  if (!forzarSinEscritura) {
+    const bloqueo = await avisarSiNoVaAEscribir();
+    if (bloqueo) return null;
+  }
 
   setStatus("Arrancando ensayo...", "running");
 
@@ -70,6 +79,110 @@ async function startCapture() {
     setStatus(err.message, "error");
     return null;
   }
+}
+
+
+/**
+ * ¿Este ensayo va a mover el actuador de verdad?
+ *
+ * Devuelve `true` si conviene NO arrancar todavía. Se avisa solo en el caso
+ * que importa: la variable es escribible pero el armado está apagado. Si no
+ * hay sesión OPC UA o la variable es de solo lectura, el ensayo en modo dibujo
+ * es lo único posible y no hay nada que advertir.
+ */
+async function avisarSiNoVaAEscribir() {
+  let estado;
+
+  try {
+    const response = await fetch(`${State.API_BASE}/api/test/writer`);
+    if (!response.ok) return false;
+    estado = await response.json();
+  } catch (_) {
+    return false;  // sin diagnóstico, mejor no estorbar
+  }
+
+  if (estado.enabled) return false;   // armado: adelante
+  if (!estado.writable) return false; // no se puede escribir de todas formas
+
+  const config = State.test?.step || {};
+  const unidad = config.actuator_scale?.unit || "";
+
+  mostrarAvisoEscritura({
+    variable: estado.variable,
+    desde: config.step_from,
+    hasta: config.step_to,
+    unidad,
+    duracion: config.duration_s,
+  });
+
+  return true;
+}
+
+
+/** Aviso bloqueante con las dos salidas: armar y arrancar, o solo dibujar. */
+function mostrarAvisoEscritura({ variable, desde, hasta, unidad, duracion }) {
+  document.getElementById("avisoEscritura")?.remove();
+
+  const overlay = document.createElement("div");
+  overlay.id = "avisoEscritura";
+  overlay.className = "import-overlay";
+
+  overlay.innerHTML = `
+    <div class="import-modal" style="max-width:520px">
+      <h3>El ensayo no va a mover el actuador</h3>
+      <p style="font-size:13px;line-height:1.6;color:var(--text2);margin:10px 0 4px">
+        La escritura en el PLC está <strong>desarmada</strong>, así que estos
+        ${duracion ?? "?"} s van a dibujar el escalón pero
+        <strong>${escapeHtml(variable || "la variable")}</strong> se quedará
+        en su valor actual. La curva "Leído del PLC" saldrá plana y no habrá
+        nada que identificar.
+      </p>
+      <p style="font-size:12.5px;color:var(--text3);margin:0 0 16px">
+        El escalón configurado es
+        ${desde ?? "?"} → ${hasta ?? "?"} ${escapeHtml(unidad)}.
+      </p>
+      <div class="imp-actions">
+        <button class="btn btn-secondary" onclick="cerrarAvisoEscritura()">
+          Cancelar
+        </button>
+        <button class="btn btn-secondary" onclick="cerrarAvisoEscritura(); startCapture(true)">
+          Solo dibujar
+        </button>
+        <button class="btn btn-primary" onclick="armarYArrancar()">
+          <i class="fa-solid fa-play"></i> Armar y arrancar
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+}
+
+
+function cerrarAvisoEscritura() {
+  document.getElementById("avisoEscritura")?.remove();
+}
+
+
+/** Arma la escritura y arranca el ensayo en un solo gesto. */
+async function armarYArrancar() {
+  cerrarAvisoEscritura();
+
+  const chk = document.getElementById("chkWriter");
+  if (chk) chk.checked = true;
+
+  await toggleWriter();
+
+  // `toggleWriter` desmarca la casilla si el backend rechazó el armado.
+  if (!document.getElementById("chkWriter")?.checked) {
+    setStatus(
+      "No se pudo armar la escritura, así que el ensayo no arrancó.",
+      "error"
+    );
+    return;
+  }
+
+  await startCapture(true);
 }
 
 
@@ -844,6 +957,9 @@ function populateVariableDropdowns(sample) {
     : Object.keys(sample?.raw || {});   // backends viejos, sin `variables`
 
   if (!keys.length) return;
+
+  // El desplegable del ciclo de tarea se alimenta del mismo catálogo.
+  if (typeof poblarVariablesDeCiclo === "function") poblarVariablesDeCiclo(keys);
 
   const mapping = sample.mapping || {};
 

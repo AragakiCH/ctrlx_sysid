@@ -1562,3 +1562,68 @@ hr {
 }
 
 #cCmp { cursor: grab; }
+
+
+/* ==================== RITMO REAL DE MUESTREO ====================
+   El "Tiempo de muestreo" del paso 1 es una PETICIÓN, no un hecho: el
+   servidor OPC UA puede conceder otro intervalo, y si la suscripción no
+   sale se cae a polling, donde el techo lo pone la latencia de red.
+   Este bloque hace visible esa diferencia en el momento, en vez de que
+   se descubra recién cuando la identificación sale pobre. */
+.sampling-real {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--text-muted);
+  border-radius: var(--radius);
+  background: var(--surface-2, var(--surface));
+}
+
+.sampling-real[hidden] { display: none; }
+
+.sampling-real.ok   { border-left-color: var(--success); background: var(--success-bg); }
+.sampling-real.warn { border-left-color: var(--warning); background: var(--warning-bg); }
+
+.sampling-icon { font-size: 14px; color: var(--text3); margin-top: 1px; }
+.sampling-real.ok   .sampling-icon { color: var(--success); }
+.sampling-real.warn .sampling-icon { color: var(--warning); }
+
+.sampling-body { flex: 1; min-width: 0; }
+
+.sampling-head {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--text2);
+  letter-spacing: 0.2px;
+}
+.sampling-real.ok   .sampling-head { color: var(--success); }
+.sampling-real.warn .sampling-head { color: var(--warning); }
+
+.sampling-detail {
+  margin-top: 3px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text3);
+}
+
+.sampling-detail code {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--data);
+}
+
+/* Casilla con etiqueta al lado, alineada con los campos de su fila. */
+.check-inline {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  color: var(--text3);
+  cursor: pointer;
+  user-select: none;
+}
+.check-inline input { width: 14px; height: 14px; margin: 0; cursor: pointer; }

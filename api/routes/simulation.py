@@ -160,6 +160,15 @@ def set_config(body: TestConfigRequest, request: Request) -> dict:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+        # Si el usuario activó la sincronización, bajar el ciclo del MainTask
+        # cuando el muestreo pedido queda por debajo. No se propaga el fallo:
+        # que el PLC no acepte el cambio no invalida la configuración del
+        # ensayo, y el estado del ciclo se consulta aparte.
+        try:
+            request.app.state.task_cycle_service.sync_with_period(body.sample_period_s)
+        except Exception as exc:
+            print(f"[CICLO] No se pudo sincronizar el ciclo de tarea: {exc}")
+
     try:
         return _service(request).set_step_config(
             step_from=body.step_from,

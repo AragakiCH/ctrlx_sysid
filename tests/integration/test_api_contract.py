@@ -108,6 +108,7 @@ def test_status_trae_las_claves_documentadas(client):
         "last_login_ts",
         "program_name",
         "mapping",
+        "sampling",
     }
 
 

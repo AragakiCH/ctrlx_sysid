@@ -50,7 +50,14 @@ class _OpcFalso:
 
 
 def _reader(mapping, nombres=PROGRAMA):
-    """PLCReader sin red, con repo y cliente OPC UA falsos."""
+    """
+    PLCReader sin red, con repo y cliente OPC UA falsos.
+
+    Se salta `__init__` para no abrir conexiones, así que hay que poner a mano
+    todo lo que use el camino bajo prueba. Si al añadir un atributo nuevo al
+    constructor estos tests fallan con `AttributeError`, la solución es
+    añadirlo aquí, no volver defensivo el código de producción.
+    """
     r = PLCReader.__new__(PLCReader)
     r.mapping = mapping
     r.include_raw = True
@@ -65,6 +72,17 @@ def _reader(mapping, nombres=PROGRAMA):
     r._last_sample_monotonic = None
     r._last_read_duration_s = None
     r._last_interval_s = None
+
+    # Muestreo por suscripción: estas pruebas cubren el camino de polling.
+    r._sampler = None
+    r._sampling_mode = "polling"
+    r._requested_period_s = None
+    r._revised_period_s = None
+    r._last_subscription_sample = None
+    r._sub_time_offset = None
+    r._subscription_delivered = False
+    r._subscription_disabled = False
+    r._subscription_error = None
     return r
 
 
