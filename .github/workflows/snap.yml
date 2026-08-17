@@ -1,3 +1,16 @@
+# Empaquetado del snap para amd64 y arm64.
+#
+# NO se usa `snapcore/action-build`. Cada `uses:` obliga al runner a descargar
+# un tar.gz desde codeload.github.com, y ese servicio devuelve 429/502/503 con
+# bastante frecuencia sobre el pool de IPs de los runners ARM, que es más
+# pequeño que el de amd64. El síntoma era siempre el mismo: amd64 pasaba y
+# arm64 moría con "Failed to download archive ... after 3 attempts", sin que el
+# snapcraft.yaml llegara a ejecutarse nunca.
+#
+# En su lugar se llama a snapcraft directamente. Queda una sola descarga —el
+# propio snapcraft, desde la tienda de snaps, otra CDN distinta— y esa sí se
+# puede envolver en reintentos, cosa que un `uses:` no permite.
+
 name: Build & publish snap (amd64 + arm64)
 
 on:
@@ -25,9 +38,49 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Instalar snapcraft
+        run: |
+          set -euo pipefail
+
+          # snapd tarda en terminar de sembrarse en runners recién arrancados;
+          # sin esto el primer `snap install` falla por una carrera.
+          sudo snap wait system seed.loaded
+
+          # Reintentos con espera creciente. Es la única descarga externa que
+          # queda, y es exactamente el paso que venía fallando.
+          for intento in 1 2 3 4 5; do
+            if sudo snap install snapcraft --classic; then
+              exit 0
+            fi
+            espera=$((intento * 15))
+            echo "Intento $intento fallido. Reintento en ${espera}s..."
+            sleep "$espera"
+          done
+
+          echo "No se pudo instalar snapcraft tras 5 intentos."
+          exit 1
+
       - name: Build snap
         id: build
-        uses: snapcore/action-build@v1
+        run: |
+          set -euo pipefail
+
+          # --destructive-mode construye en el propio runner en vez de levantar
+          # un contenedor LXD. Se puede porque `base: core22` coincide con
+          # ubuntu-22.04: sin esa coincidencia haría falta LXD.
+          #
+          # Es además bastante más rápido y evita montar LXD, que en los
+          # runners ARM da más guerra.
+          sudo snapcraft --destructive-mode --verbosity brief
+
+          archivo=$(ls -1 ./*.snap | head -n1)
+          if [ -z "$archivo" ]; then
+            echo "snapcraft terminó sin error pero no dejó ningún .snap"
+            exit 1
+          fi
+
+          echo "snap=$archivo" >> "$GITHUB_OUTPUT"
+          echo "Generado: $archivo"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -57,13 +110,29 @@ jobs:
       - name: Resolve snap file
         id: snap
         run: |
-          file=$(ls dist/*.snap | head -n1)
-          echo "path=$file" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          archivo=$(ls -1 dist/*.snap | head -n1)
+          echo "path=$archivo" >> "$GITHUB_OUTPUT"
+
+      # Mismo motivo que arriba: `snapcore/action-publish` es otra descarga
+      # desde codeload que se puede caer. `snapcraft upload` hace lo mismo.
+      - name: Instalar snapcraft
+        run: |
+          set -euo pipefail
+          sudo snap wait system seed.loaded
+          for intento in 1 2 3 4 5; do
+            if sudo snap install snapcraft --classic; then
+              exit 0
+            fi
+            espera=$((intento * 15))
+            echo "Intento $intento fallido. Reintento en ${espera}s..."
+            sleep "$espera"
+          done
+          exit 1
 
       - name: Publish to Snap Store (edge)
-        uses: snapcore/action-publish@v1
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
-        with:
-          snap: ${{ steps.snap.outputs.path }}
-          release: edge
+        run: |
+          set -euo pipefail
+          snapcraft upload --release=edge "${{ steps.snap.outputs.path }}"
