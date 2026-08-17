@@ -72,6 +72,51 @@ class _Agrupador:
         # pesa. Trabajando sobre la diferencia contra el primero, los valores
         # se mantienen pequeños y el redondeo es exacto.
         self._t0: Optional[float] = None
+        # Instante local en que se fijó `_t0`. Permite saber en qué ciclo
+        # estaríamos AHORA sin depender de que el servidor mande nada.
+        self._t0_wall: Optional[float] = None
+
+    @property
+    def ultimos_valores(self) -> dict:
+        with self._lock:
+            return dict(self._ultimos)
+
+    def latido(self) -> None:
+        """
+        Emite una muestra con los últimos valores conocidos si el ciclo ya pasó
+        sin producir ninguna.
+
+        **Es lo que mantiene viva la señal.** Una suscripción OPC UA solo
+        notifica CAMBIOS: un proceso en régimen permanente, o una variable que
+        el programa PLC nunca toca, no genera ni una sola notificación. Sin
+        esto la señal se corta justo donde más falta hace —la línea base plana
+        ANTES del escalón, que es la que fija el valor inicial y el umbral de
+        detección— y desde fuera parece que la suscripción se cayó.
+
+        Repetir el último valor es exactamente lo que devolvería el polling:
+        si el PLC no lo cambió, ese ES el valor.
+        """
+        with self._lock:
+            if self._t0 is None or self._t0_wall is None or not self._ultimos:
+                # Nunca llegó ningún valor: no hay nada que repetir. Distinto
+                # de un proceso quieto, y quien llama necesita esa diferencia.
+                return
+
+            # Un ciclo de retraso, para no adelantarse a una notificación real
+            # que esté llegando en este mismo instante y acabar descartándola
+            # por pertenecer a un ciclo ya emitido.
+            actual = int(round((time.monotonic() - self._t0_wall) / self._bucket_s)) - 1
+
+            if actual < 0:
+                return
+
+            if self._ultima_clave_emitida is not None and actual <= self._ultima_clave_emitida:
+                return
+
+            # Solo el ciclo actual. Rellenar todos los huecos acumulados tras
+            # una pausa larga inundaría el buffer de golpe.
+            self._grupos.setdefault(actual, {})
+            self._emitir([actual], latido=True)
 
     def _clave(self, timestamp: float) -> int:
         """
@@ -84,6 +129,7 @@ class _Agrupador:
         """
         if self._t0 is None:
             self._t0 = timestamp
+            self._t0_wall = time.monotonic()
 
         return int(round((timestamp - self._t0) / self._bucket_s))
 
@@ -113,7 +159,7 @@ class _Agrupador:
                 sobrantes = sorted(self._grupos)[: len(self._grupos) - self._max_pendientes]
                 self._emitir(sobrantes)
 
-    def _emitir(self, claves: list[int]) -> None:
+    def _emitir(self, claves: list[int], latido: bool = False) -> None:
         """Debe llamarse con el lock tomado."""
         for clave in sorted(claves):
             grupo = self._grupos.pop(clave, None)
@@ -123,6 +169,10 @@ class _Agrupador:
             muestra = {
                 "timestamp": (self._t0 or 0.0) + clave * self._bucket_s,
                 "raw": {n: grupo.get(n, self._ultimos.get(n)) for n in self._nombres},
+                # Distingue un valor que el servidor acaba de reportar de
+                # uno repetido porque nada cambió. Quien vigila la salud de
+                # la suscripción necesita saberlo.
+                "heartbeat": latido,
             }
 
             self._ultima_clave_emitida = clave
@@ -196,6 +246,9 @@ class OpcUaSampler:
         self._requested_ms: Optional[float] = None
         self._revised_ms: Optional[float] = None
 
+        self._latido_thread: Optional[threading.Thread] = None
+        self._parar = threading.Event()
+
     @property
     def requested_period_s(self) -> Optional[float]:
         return None if self._requested_ms is None else self._requested_ms / 1000.0
@@ -208,6 +261,11 @@ class OpcUaSampler:
     def monitored_count(self) -> int:
         """Cuántos items aceptó el servidor. Puede ser menos de los pedidos."""
         return len(self._handles)
+
+    @property
+    def ultimos_valores(self) -> dict:
+        """Última foto conocida de las variables suscritas."""
+        return self._agrupador.ultimos_valores if self._agrupador else {}
 
     def start(self, period_s: float, on_sample: Callable[[dict], None]) -> float:
         """
@@ -264,7 +322,36 @@ class OpcUaSampler:
         # distinto y las variables no se juntarían nunca en la misma muestra.
         self._agrupador._bucket_s = max(self._revised_ms / 1000.0, 1e-4)
 
+        self._arrancar_latido()
+
         return self._revised_ms / 1000.0
+
+    def _arrancar_latido(self) -> None:
+        """
+        Hilo que llama a `_Agrupador.latido()` al ritmo de muestreo.
+
+        Sin él la señal solo avanza cuando el PLC cambia un valor, y un proceso
+        quieto —el caso normal antes de aplicar el escalón— no produce ninguna
+        muestra. `latido()` no hace nada si el ciclo ya se emitió con datos
+        reales, así que cuando el proceso se mueve este hilo no estorba.
+        """
+        self._parar.clear()
+
+        periodo = max(self.revised_period_s or 0.02, 0.005)
+
+        def bucle() -> None:
+            while not self._parar.wait(periodo):
+                try:
+                    self._agrupador.latido()
+                except Exception:
+                    # Igual que en el agrupador: este hilo no puede morir por
+                    # un fallo aguas abajo, o la señal se cortaría del todo.
+                    pass
+
+        self._latido_thread = threading.Thread(
+            target=bucle, name="opcua-latido", daemon=True
+        )
+        self._latido_thread.start()
 
     def _crear_monitored_items(self, sampling_ms: float, queue_size: int) -> list:
         """
@@ -349,6 +436,12 @@ class OpcUaSampler:
 
     def stop(self) -> None:
         """Cierra la suscripción. Idempotente y silencioso: se llama al caer."""
+        self._parar.set()
+
+        if self._latido_thread is not None:
+            self._latido_thread.join(timeout=1.0)
+            self._latido_thread = None
+
         if self._agrupador is not None:
             try:
                 self._agrupador.vaciar()

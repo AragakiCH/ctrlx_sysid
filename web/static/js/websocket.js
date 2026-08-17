@@ -958,9 +958,6 @@ function populateVariableDropdowns(sample) {
 
   if (!keys.length) return;
 
-  // El desplegable del ciclo de tarea se alimenta del mismo catálogo.
-  if (typeof poblarVariablesDeCiclo === "function") poblarVariablesDeCiclo(keys);
-
   const mapping = sample.mapping || {};
 
   const targets = [

@@ -430,6 +430,7 @@ class _SubFalso:
         self.is_active = True
         self.has_unknown_handlers = has_unknown_handlers
         self._subscription = self
+        self.ultimos_valores = {}
 
     def stop(self):
         self.is_active = False
@@ -496,15 +497,81 @@ def test_una_suscripcion_que_nunca_publica_se_declara_muda():
     assert "no publicó" in reader._subscription_error
 
 
-def test_quedarse_muda_a_mitad_si_lanza_para_reconectar():
-    """Ahí el problema sí es la sesión, y reconectar lo arregla."""
+def test_el_silencio_ya_no_mata_una_suscripcion_que_funciona():
+    """
+    Cambio deliberado. Antes, tras N segundos sin notificaciones se lanzaba
+    para reconectar. Pero una suscripción OPC UA solo notifica CAMBIOS, así que
+    un proceso en régimen permanente calla legítimamente — justo lo que pasa en
+    la línea base antes del escalón. Matarla ahí era el motivo de que la
+    suscripción se "cortara" sola en cada ensayo.
+
+    Ahora el silencio se tolera y lo que se comprueba es que los valores no
+    estén desfasados, preguntándole al PLC.
+    """
+    import threading
     import time as _t
 
     reader = _reader_vigilando(period_s=0.02, entregada=True)
     reader._last_subscription_sample = _t.monotonic() - 100
+    reader._suscripcion_al_dia = lambda: True
 
-    with pytest.raises(RuntimeError, match="dejó de entregar"):
+    fallo = {}
+    hilo = threading.Thread(
+        target=lambda: fallo.setdefault("exc", _capturar(reader)), daemon=True
+    )
+    hilo.start()
+    hilo.join(1.5)
+
+    assert fallo.get("exc") is None
+
+
+def _capturar(reader):
+    try:
         reader._vigilar_suscripcion()
+    except Exception as exc:      # pragma: no cover - solo si el test falla
+        return exc
+    return None
+
+
+def test_una_suscripcion_desfasada_si_lanza_para_reconectar():
+    """
+    El caso que el silencio ya no cubre: la suscripción está viva pero
+    entregando valores viejos. Desde fuera se ve igual que un proceso quieto
+    —valores que no cambian—, así que solo una lectura directa los distingue.
+    """
+    reader = _reader_vigilando(period_s=0.02, entregada=True)
+    reader.VERIFY_EVERY_S = 0.0            # verificar en la primera vuelta
+    reader._suscripcion_al_dia = lambda: False
+
+    with pytest.raises(RuntimeError, match="desfasada"):
+        reader._vigilar_suscripcion()
+
+
+def test_al_dia_compara_la_cache_contra_el_plc():
+    reader = _reader_vigilando()
+    reader._sampler.ultimos_valores = {"y": 8.085}
+
+    reader.read_variable_value = lambda nombre: 8.085
+    assert reader._suscripcion_al_dia() is True
+
+    reader.read_variable_value = lambda nombre: 12.4
+    assert reader._suscripcion_al_dia() is False
+
+
+def test_una_lectura_fallida_no_condena_a_la_suscripcion():
+    """Un fallo puntual de lectura no prueba que la suscripción esté rota."""
+    reader = _reader_vigilando()
+    reader._sampler.ultimos_valores = {"y": 8.085}
+    reader.read_variable_value = lambda nombre: None
+
+    assert reader._suscripcion_al_dia() is True
+
+
+def test_sin_cache_todavia_no_hay_nada_que_comparar():
+    reader = _reader_vigilando()
+    reader._sampler.ultimos_valores = {}
+
+    assert reader._suscripcion_al_dia() is True
 
 
 def test_una_suscripcion_muda_apaga_las_suscripciones_y_pide_polling():
@@ -672,3 +739,110 @@ def test_un_error_de_codigo_en_la_ruta_de_suscripcion_no_impide_el_polling():
     assert reader._sampling_mode == "polling"
     assert reader._sampler is None
     assert "AttributeError" in reader._subscription_error
+
+
+# --------------------------------------------------------------------------- #
+# Latido: la señal no puede cortarse porque el proceso esté quieto
+# --------------------------------------------------------------------------- #
+#
+# Una suscripción OPC UA solo notifica CAMBIOS. Un proceso en régimen
+# permanente no genera ni una notificación, y eso es exactamente lo que pasa en
+# la línea base ANTES del escalón: la parte que fija el valor inicial y el
+# umbral de detección. Sin latido la señal se corta justo ahí y desde fuera
+# parece que la suscripción se cayó.
+
+
+def test_sin_ningun_valor_no_se_inventa_nada(recogidas):
+    """Repetir un valor exige tener uno. Sin datos no hay nada que repetir."""
+    g = _Agrupador(["a"], bucket_s=0.01, on_sample=recogidas.append)
+
+    g.latido()
+
+    assert recogidas == []
+
+
+def test_el_latido_repite_el_ultimo_valor_conocido(recogidas):
+    import time as _t
+
+    g = _Agrupador(["a", "b"], bucket_s=0.01, on_sample=recogidas.append)
+    g.agregar("a", 7.5, 500.000)
+    g.agregar("b", 2.5, 500.000)
+
+    _t.sleep(0.05)      # el proceso queda quieto: el servidor no manda nada
+    g.latido()
+
+    assert len(recogidas) >= 1
+    ultima = recogidas[-1]
+    assert ultima["raw"] == {"a": 7.5, "b": 2.5}
+    assert ultima["heartbeat"] is True
+
+
+def test_las_muestras_reales_no_se_marcan_como_latido(agrupador, recogidas):
+    agrupador.agregar("rActuator", 1.0, 100.000)
+    agrupador.agregar("rActuator", 2.0, 100.010)
+
+    assert recogidas[0]["heartbeat"] is False
+
+
+def test_el_latido_no_pisa_un_ciclo_ya_emitido_con_datos_reales(recogidas):
+    """Si el servidor sí está publicando, el latido tiene que apartarse."""
+    g = _Agrupador(["a"], bucket_s=0.5, on_sample=recogidas.append)
+    g.agregar("a", 1.0, 900.0)
+    g.agregar("a", 2.0, 900.5)      # emite el ciclo 0
+
+    antes = len(recogidas)
+    g.latido()                       # el ciclo actual es el 0, ya emitido
+
+    assert len(recogidas) == antes
+
+
+def test_el_latido_avanza_el_eje_de_tiempo(recogidas):
+    """Repetir el valor sin avanzar el tiempo daría una muestra encima de otra."""
+    import time as _t
+
+    g = _Agrupador(["a"], bucket_s=0.01, on_sample=recogidas.append)
+    g.agregar("a", 1.0, 700.000)
+
+    _t.sleep(0.05)
+    g.latido()
+    _t.sleep(0.05)
+    g.latido()
+
+    instantes = [m["timestamp"] for m in recogidas]
+    assert instantes == sorted(instantes)
+    assert len(set(instantes)) == len(instantes)
+
+
+def test_el_sampler_late_solo_mientras_esta_activo():
+    """Un hilo suelto seguiría empujando muestras tras cerrar la sesión."""
+    import time as _t
+
+    recogidas = []
+    sampler = OpcUaSampler(ClienteFalso(), {"a": NodoFalso("a")})
+    sampler.start(0.02, recogidas.append)
+    sampler._agrupador.agregar("a", 3.0, 800.0)
+
+    _t.sleep(0.25)
+    durante = len(recogidas)
+
+    sampler.stop()
+    _t.sleep(0.2)
+
+    assert durante > 1                    # latió mientras estaba activo
+    assert len(recogidas) == durante      # y dejó de latir al cerrarse
+
+
+def test_un_proceso_quieto_sigue_dando_muestras_al_ritmo_pedido():
+    """La prueba de fondo: régimen permanente y la señal no se corta."""
+    import time as _t
+
+    recogidas = []
+    sampler = OpcUaSampler(ClienteFalso(), {"y": NodoFalso("y")})
+    sampler.start(0.02, recogidas.append)
+
+    sampler._agrupador.agregar("y", 8.085, 1000.0)   # único valor del servidor
+    _t.sleep(0.5)
+    sampler.stop()
+
+    assert len(recogidas) >= 15                       # ~25 esperadas en 0.5 s
+    assert all(m["raw"]["y"] == 8.085 for m in recogidas)

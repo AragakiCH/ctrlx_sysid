@@ -88,6 +88,7 @@ class PLCReader:
         # ¿Llegó alguna vez una muestra por esta suscripción? Distingue "se
         # quedó muda a mitad" de "nunca arrancó", que se arreglan distinto.
         self._subscription_delivered = False
+        self._last_real_notification: Optional[float] = None
         # Se apaga tras comprobar que en este servidor las suscripciones no
         # entregan nada. Sin esto la reconexión las reintenta para siempre y
         # la aplicación se queda sin datos en vez de caer a polling.
@@ -110,6 +111,14 @@ class PLCReader:
 
     # Cada cuánto se vuelve a listar las variables del programa.
     CATALOG_REFRESH_S = 10.0
+
+    # Cada cuánto se comprueba, con una lectura directa, que la suscripción no
+    # esté colgada entregando valores viejos. Ver `_suscripcion_al_dia`.
+    VERIFY_EVERY_S = 5.0
+
+    # Margen de la comparación. Un float que viaja por OPC UA puede volver con
+    # el último bit distinto sin que nada esté mal.
+    VERIFY_TOLERANCE = 1e-6
 
     # ------------------------------------------------------------------ #
     # Resolución de señales
@@ -326,6 +335,7 @@ class PLCReader:
         self._subscription_error = None
         self._requested_period_s = self.period_s
         self._subscription_delivered = False
+        self._last_real_notification = None
 
         try:
             with self._io_lock:
@@ -427,7 +437,12 @@ class PLCReader:
     ) -> None:
         """Convierte lo que entrega el agrupador en una muestra completa."""
         self._last_subscription_sample = time.monotonic()
-        self._subscription_delivered = True
+
+        # Un latido repite el último valor porque nada cambió; no prueba que la
+        # suscripción siga viva. Solo una notificación real lo hace.
+        if not parcial.get("heartbeat"):
+            self._subscription_delivered = True
+            self._last_real_notification = time.monotonic()
 
         sample = self._compose_sample(
             raw_values=parcial.get("raw", {}),
@@ -502,11 +517,12 @@ class PLCReader:
         """
         periodo = self._revised_period_s or self.period_s
 
-        # El primer lote tarda un PublishingInterval entero, que es varias
-        # veces el periodo de muestreo. Se da margen de sobra para no declarar
-        # muda una suscripción que solo estaba arrancando.
+        # El primer lote tarda un PublishingInterval entero, varias veces el
+        # periodo de muestreo. Margen de sobra para no declarar muda una
+        # suscripción que solo estaba arrancando.
         tolerancia_arranque = max(6.0, periodo * 100)
-        tolerancia_corriendo = max(3.0, periodo * 50)
+
+        proxima_verificacion = time.monotonic() + self.VERIFY_EVERY_S
 
         while not self._stop:
             time.sleep(0.2)
@@ -517,11 +533,11 @@ class PLCReader:
             if self.period_s != self._requested_period_s:
                 return "periodo"
 
-            ultimo = self._last_subscription_sample or time.monotonic()
-            silencio = time.monotonic() - ultimo
+            ahora = time.monotonic()
 
             if not self._subscription_delivered:
-                if silencio > tolerancia_arranque:
+                ultimo = self._last_subscription_sample or ahora
+                if ahora - ultimo > tolerancia_arranque:
                     self._subscription_error = (
                         f"El servidor aceptó la suscripción pero no publicó "
                         f"ninguna muestra en {tolerancia_arranque:.0f} s."
@@ -530,13 +546,56 @@ class PLCReader:
                     return "muda"
                 continue
 
-            if silencio > tolerancia_corriendo:
-                raise RuntimeError(
-                    f"La suscripción dejó de entregar muestras "
-                    f"({tolerancia_corriendo:.0f} s sin datos)."
-                )
+            # A partir de aquí NO se vigila por silencio.
+            #
+            # Una suscripción OPC UA solo notifica cambios, así que un proceso
+            # en régimen permanente calla legítimamente: es exactamente lo que
+            # pasa en la línea base, justo antes del escalón. Matarla ahí era
+            # el motivo de que se "cortara" sola en cada ensayo.
+            #
+            # Lo que sí hay que descartar es que esté colgada entregando
+            # valores viejos. Eso no se distingue del silencio legítimo mirando
+            # el reloj: hay que preguntarle al PLC.
+            if ahora >= proxima_verificacion:
+                proxima_verificacion = ahora + self.VERIFY_EVERY_S
+
+                if not self._suscripcion_al_dia():
+                    raise RuntimeError(
+                        "La suscripción quedó desfasada: el PLC tiene valores "
+                        "que no se están recibiendo."
+                    )
 
         return None
+
+    def _suscripcion_al_dia(self) -> bool:
+        """
+        ¿La foto que mantiene la suscripción coincide con el PLC?
+
+        Una lectura directa cada pocos segundos. Es barata comparada con el
+        polling —una cada `VERIFY_EVERY_S`, no una por muestra— y es la única
+        forma de separar "el proceso está quieto" de "la suscripción está
+        colgada", porque desde fuera las dos se ven igual: valores que no
+        cambian.
+
+        Ante la duda devuelve True: una lectura fallida no es prueba de que la
+        suscripción esté rota, y tirarla por eso sería peor.
+        """
+        cache = self._sampler.ultimos_valores if self._sampler else {}
+        if not cache:
+            return True
+
+        nombre = next(iter(cache))
+        actual = self.read_variable_value(nombre)
+
+        if actual is None:
+            return True
+
+        esperado = cache[nombre]
+
+        if isinstance(actual, (int, float)) and isinstance(esperado, (int, float)):
+            return abs(float(actual) - float(esperado)) <= self.VERIFY_TOLERANCE
+
+        return actual == esperado
 
     def _pista_de_suscripcion_muda(self) -> str:
         """
