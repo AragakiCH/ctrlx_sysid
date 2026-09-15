@@ -96,6 +96,47 @@ class StepDetectorService:
 
         return None
 
+    def find_next_transition_index(
+        self, actuator_data: list[float], after_index: int
+    ) -> int | None:
+        """
+        Primer punto, después de `after_index`, en el que el actuador vuelve a
+        BAJAR al menos `min_step_delta` respecto al máximo que alcanzó tras el
+        escalón. Ahí termina la respuesta al escalón que se está identificando.
+
+        Es el espejo de `find_previous_step_index` para el lado derecho de la
+        ventana, y existe por el ensayo con escritura al PLC: al terminar, el
+        runner devuelve el actuador a `step_from`. La ventana se dimensiona con
+        `post_samples` contados desde el escalón, pero el escalón se LEE una
+        muestra después de escribirse (el PLC lo aplica y OPC UA lo publica en
+        la lectura siguiente), así que la ventana quedaba una muestra más larga
+        que el ensayo y su última muestra ya traía el actuador de vuelta al
+        valor inicial. `detect_step_info` toma `final_u` de esa última muestra:
+        `final_u == initial_u`, `delta_u == 0` y el ajuste se rechazaba con
+        "No se detectó cambio en el actuador" aunque el gráfico mostrara el
+        escalón entero.
+
+        Se compara contra el máximo acumulado, no entre muestras consecutivas,
+        para que una vuelta en rampa (rate limiter en el PLC) también se
+        detecte. Durante la propia subida el máximo acumulado es el valor
+        actual, así que la rampa de subida nunca dispara el corte.
+        """
+        n = len(actuator_data)
+        if after_index < 0 or after_index >= n - 1:
+            return None
+
+        peak = actuator_data[after_index]
+
+        for k in range(after_index + 1, n):
+            valor = actuator_data[k]
+            if valor > peak:
+                peak = valor
+                continue
+            if peak - valor >= self.min_step_delta:
+                return k
+
+        return None
+
     def find_latest_step_index(self, actuator_data: list[float]) -> int | None:
         """
         Busca el último escalón de cualquier signo.
@@ -129,6 +170,13 @@ class StepDetectorService:
             start = max(start, previous_step)
 
         end = min(len(series.time), step_index + post_samples)
+
+        # Y tampoco puede cruzar la transición SIGUIENTE: si el actuador ya
+        # volvió al valor inicial (fin del ensayo con escritura al PLC, o un
+        # programa que cicla), lo que sigue no es respuesta a este escalón.
+        next_transition = self.find_next_transition_index(series.actuator, step_index)
+        if next_transition is not None:
+            end = min(end, next_transition)
 
         if end - start < 20:
             return None

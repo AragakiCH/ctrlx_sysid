@@ -179,6 +179,9 @@ event_loop: asyncio.AbstractEventLoop | None = None
 last_identification_result: dict | None = None
 last_step_index: int | None = None
 min_separation_samples = 20
+# Último error de la identificación automática, para no repetirlo en el log
+# a cada muestra (5 veces por segundo) pero tampoco perderlo.
+_last_auto_ident_error: str | None = None
 
 
 def broadcast_from_thread(message: dict) -> None:
@@ -247,7 +250,7 @@ def get_current_use_percent() -> bool:
 
 
 def on_sample(sample: dict) -> None:
-    global event_loop, last_identification_result, last_step_index
+    global event_loop, last_identification_result, last_step_index, _last_auto_ident_error
 
     # Etiqueta la muestra con lo que el ensayo estaba comandando en ese instante.
     # Va en campos aparte (`actuator_cmd`) y NO pisa el `actuator` leído del PLC:
@@ -301,9 +304,17 @@ def on_sample(sample: dict) -> None:
         app.state.last_step_index = last_step_index
 
         broadcast_from_thread({"type": "identification_result", "data": result})
+        _last_auto_ident_error = None
 
-    except Exception:
-        pass
+    except Exception as exc:
+        # Antes se silenciaba del todo: si la ventana no validaba (por ejemplo
+        # "No se detectó cambio en el actuador"), la identificación automática
+        # no llegaba nunca y no quedaba rastro de por qué. Se registra una vez
+        # por mensaje distinto; la siguiente muestra vuelve a intentarlo.
+        mensaje = f"{type(exc).__name__}: {exc}"
+        if mensaje != _last_auto_ident_error:
+            _last_auto_ident_error = mensaje
+            print(f"[IDENT] Identificación automática pospuesta: {mensaje}")
 
 
 opcua_session_service = OpcUaSessionService(

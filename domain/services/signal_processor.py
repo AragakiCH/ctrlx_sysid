@@ -59,7 +59,12 @@ class SignalProcessor:
         if not tramo:
             return values[0]
 
-        ordenado = sorted(tramo)
+        return SignalProcessor._median(tramo)
+
+    @staticmethod
+    def _median(values: list[float]) -> float:
+        """Mediana: un pico de ruido no la arrastra, la media sí."""
+        ordenado = sorted(values)
         medio = len(ordenado) // 2
 
         if len(ordenado) % 2:
@@ -86,7 +91,14 @@ class SignalProcessor:
         #
         # La mediana, y no la media, para que un pico de ruido no la arrastre.
         initial_u = SignalProcessor._baseline(actuator_data, step_index)
-        final_u = actuator_data[-1]
+
+        # Régimen permanente DESPUÉS del escalón: mediana de las últimas
+        # muestras, no la última suelta. Una sola lectura al final de la
+        # ventana con el actuador ya de vuelta a su valor inicial (o un pico
+        # de ruido en un 4-20 mA leído del campo) no debe anular el escalón
+        # que las demás muestras sí muestran.
+        cola = max(1, min(5, len(actuator_data) // 5))
+        final_u = SignalProcessor._median(actuator_data[-cola:])
         delta_u = final_u - initial_u
 
         initial_y = SignalProcessor._baseline(sensor_data, step_index)

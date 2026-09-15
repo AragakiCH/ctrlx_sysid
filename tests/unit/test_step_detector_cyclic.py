@@ -127,3 +127,64 @@ class TestVentanaNoCruzaElEscalonAnterior:
         )
 
         assert len(window.time) == 125  # 50 antes + 75 después, sin recorte
+
+
+# --------------------------------------------------------------------------- #
+# La ventana no cruza la transición SIGUIENTE
+# --------------------------------------------------------------------------- #
+
+
+def test_find_next_transition_detecta_la_vuelta_al_valor_inicial():
+    from application.services.step_detector_service import StepDetectorService
+
+    det = StepDetectorService(min_step_delta=12.5)
+    u = [25.0] * 10 + [50.0] * 20 + [25.0] * 5
+
+    assert det.find_next_transition_index(u, after_index=10) == 30
+
+
+def test_find_next_transition_detecta_una_vuelta_en_rampa():
+    """Con rate limiter el actuador no cae de golpe: se compara contra el máximo."""
+    from application.services.step_detector_service import StepDetectorService
+
+    det = StepDetectorService(min_step_delta=12.5)
+    rampa = [50.0 - 2.5 * i for i in range(1, 11)]   # 47.5 ... 25.0
+    u = [25.0] * 10 + [50.0] * 20 + rampa
+
+    k = det.find_next_transition_index(u, after_index=10)
+    assert k is not None
+    assert u[k] <= 50.0 - 12.5
+    assert u[k - 1] > 50.0 - 12.5
+
+
+def test_find_next_transition_ignora_la_propia_subida_en_rampa():
+    from application.services.step_detector_service import StepDetectorService
+
+    det = StepDetectorService(min_step_delta=12.5)
+    subida = [25.0 + 2.5 * i for i in range(1, 11)]
+    u = [25.0] * 10 + subida + [50.0] * 20
+
+    assert det.find_next_transition_index(u, after_index=10) is None
+
+
+def test_la_ventana_se_corta_donde_el_actuador_vuelve():
+    from application.services.step_detector_service import StepDetectorService
+    from domain.models.signals import SignalSeries
+
+    det = StepDetectorService(min_step_delta=12.5)
+    n_pre, n_step, n_back = 20, 30, 10
+    u = [25.0] * n_pre + [50.0] * n_step + [25.0] * n_back
+    y = [20.0] * n_pre + [45.0] * n_step + [45.0] * n_back
+    t = [0.2 * i for i in range(len(u))]
+    series = SignalSeries(time=t, actuator=u, sensor=y, setpoint=[], signal_type=0)
+
+    step = det.find_latest_rising_step_index(u)
+    assert step == n_pre
+
+    # Se piden más muestras de las que hay antes de la vuelta.
+    win = det.extract_window_from_step_index(series, step, pre_samples=10, post_samples=n_step + 5)
+
+    assert win is not None
+    assert max(win.actuator) == 50.0
+    assert win.actuator[-1] == 50.0, "la ventana no debe incluir la vuelta a 25"
+    assert len(win.actuator) == 10 + n_step

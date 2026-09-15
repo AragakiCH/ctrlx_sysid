@@ -185,3 +185,64 @@ def test_sin_escalon_devuelve_400(client):
 
     assert response.status_code == 400
     assert "No se detectó ningún escalón" in response.json()["detail"]
+
+
+def fill_buffer_ensayo_con_escritura(lag_samples=1, extra_after=5, dt=0.2):
+    """
+    Buffer tal como queda tras un ensayo con "Escribir en el PLC":
+
+    * el escalón se escribe en t=10 s pero se LEE `lag_samples` después (el
+      PLC lo aplica y OPC UA lo publica en la lectura siguiente);
+    * al cumplirse los 20 s el runner devuelve el actuador a `step_from`;
+    * el lector sigue llenando el buffer `extra_after` muestras más.
+    """
+    main.reset_runtime_state()
+
+    k, tau, dead_time, y0 = 1.0, 0.5, 0.3, 20.0
+    n = int(20.0 / dt) + extra_after
+
+    for i in range(n):
+        t = i * dt
+        if t < 10.0 + lag_samples * dt:
+            u = 25.0
+        elif t < 20.0:
+            u = 50.0
+        else:
+            u = 25.0   # _return_to_start()
+
+        te = t - 10.0 - dead_time
+        y = y0 + (k * 25.0 * (1.0 - math.exp(-te / tau)) if te > 0 else 0.0)
+
+        main.realtime_service.add_sample(
+            {"time": t, "actuator": u, "sensor": y, "setpoint": 50.0, "signal_type": 0, "raw": {}}
+        )
+
+
+@pytest.mark.parametrize("lag_samples", [0, 1, 2])
+@pytest.mark.parametrize("extra_after", [0, 1, 5, 40])
+def test_la_vuelta_del_actuador_al_terminar_no_anula_el_escalon(client, lag_samples, extra_after):
+    """
+    Regresión del "No se detectó cambio en el actuador" con el PLC físico.
+
+    La ventana se dimensiona con `post_samples` desde el escalón, pero el
+    escalón se lee una muestra tarde: la ventana quedaba una muestra más larga
+    que el ensayo y su última muestra ya traía el actuador de vuelta al valor
+    inicial. `final_u == initial_u` y el ajuste se rechazaba, aunque el gráfico
+    mostrara el escalón completo. En la simulación no pasaba porque nadie
+    devolvía el actuador.
+    """
+    service = main.app.state.test_config_service
+    service.set_step_config(
+        step_from=25.0, step_to=50.0, delay_s=10.0, duration_s=20.0, sample_period_s=0.2
+    )
+
+    fill_buffer_ensayo_con_escritura(lag_samples=lag_samples, extra_after=extra_after)
+
+    r = client.post("/api/identification/run")
+
+    assert r.status_code == 200, r.json()
+    body = r.json()
+    assert body["winner"] in ("fopdt", "sopdt")
+    assert body["models"][0]["gain"] == pytest.approx(1.0, abs=0.05)
+    # La ventana termina donde el actuador abandona el escalón, nunca después.
+    assert min(body["window"]["actuator"][-3:]) > 40.0
