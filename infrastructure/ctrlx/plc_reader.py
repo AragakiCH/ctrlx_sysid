@@ -30,6 +30,13 @@ class PLCReader:
     # Se mantiene por compatibilidad; la fuente de verdad es node_repository.
     SIGNAL_ALIASES = SIGNAL_ALIASES
 
+    # Versión del mapeo rol -> variable. `set_mapping` la incrementa y la
+    # suscripción recuerda con cuál se abrió: si difieren hay que reabrirla.
+    # Son atributos de clase para que un reader armado con `__new__` (tests)
+    # también los tenga.
+    _mapping_version: int = 0
+    _subscribed_mapping_version: int = 0
+
     def __init__(
         self,
         url: str,
@@ -342,6 +349,7 @@ class PLCReader:
                 self._refresh_catalog_locked(program_node)
                 catalog = list(self._variable_names)
                 effective_mapping = resolve_mapping(self.mapping, catalog)
+                version = self._mapping_version
 
                 # Solo los roles con variable asignada: suscribir el programa
                 # entero multiplicaría el tráfico sin aportar nada.
@@ -360,11 +368,18 @@ class PLCReader:
             sampler = OpcUaSampler(self._opc.client, nodos)
 
             def entregar(parcial: dict) -> None:
+                # El mapeo cambió y esta suscripción está a punto de
+                # reabrirse: sus muestras llevan la etiqueta vieja y valores
+                # de las variables viejas. Entregarlas haría que la vista
+                # "deshiciera" el cambio del usuario durante ese instante.
+                if version != self._mapping_version:
+                    return
                 self._on_subscription_sample(parcial, catalog, effective_mapping)
 
             revisado = sampler.start(self.period_s, entregar)
 
             self._sampler = sampler
+            self._subscribed_mapping_version = version
             self._sampling_mode = "subscription"
             self._revised_period_s = revisado
             self._last_subscription_sample = time.monotonic()
@@ -484,14 +499,15 @@ class PLCReader:
                 print(f"[SUB] Desactivada: {self._subscription_error}")
                 return False
 
-            if motivo != "periodo":
+            if motivo not in ("periodo", "mapeo"):
                 return True
 
-            # El periodo se cambió en la vista. Una suscripción se negocia con
-            # un intervalo fijo al abrirla: a diferencia del polling, que lee
-            # `period_s` en cada vuelta, aquí no basta con cambiar el atributo.
-            # Sin reabrir, mover el campo de 100 ms a 20 ms no haría nada y el
-            # aviso de la vista seguiría mostrando el ritmo viejo.
+            # Se cambió el periodo o el mapeo en la vista. Una suscripción se
+            # negocia con un intervalo y un conjunto de nodos fijos al abrirla:
+            # a diferencia del polling, que lee `period_s` y `mapping` en cada
+            # vuelta, aquí no basta con cambiar el atributo. Sin reabrir, mover
+            # el campo de 100 ms a 20 ms no haría nada, y cambiar el set point
+            # a otra variable seguiría entregando la anterior.
             if not self._try_subscription(program_node):
                 return False
 
@@ -501,8 +517,9 @@ class PLCReader:
         """
         Espera mientras la suscripción entrega muestras.
 
-        Devuelve `"periodo"` si hay que reabrirla con otro intervalo, `"muda"`
-        si nunca entregó nada, o None si se está parando.
+        Devuelve `"periodo"` si hay que reabrirla con otro intervalo, `"mapeo"`
+        si cambió el mapeo de variables, `"muda"` si nunca entregó nada, o None
+        si se está parando.
 
         Los dos silencios no son el mismo problema:
 
@@ -532,6 +549,9 @@ class PLCReader:
 
             if self.period_s != self._requested_period_s:
                 return "periodo"
+
+            if self._subscribed_mapping_version != self._mapping_version:
+                return "mapeo"
 
             ahora = time.monotonic()
 
@@ -637,6 +657,14 @@ class PLCReader:
         # Los nodos cacheados corresponden al mapeo anterior.
         with self._io_lock:
             self._node_cache.clear()
+
+        # Una suscripción abierta sigue vigilando los nodos del mapeo ANTERIOR
+        # y entregando muestras etiquetadas con él. El polling recalcula el
+        # mapeo en cada lectura, pero la suscripción lo fija al abrirla: sin
+        # esta marca, cambiar una variable desde la vista no surtía efecto y
+        # el desplegable volvía solo al valor viejo en cuanto llegaba la
+        # siguiente muestra. `_vigilar_suscripcion` la detecta y reabre.
+        self._mapping_version += 1
 
     # ------------------------------------------------------------------ #
     # Escritura

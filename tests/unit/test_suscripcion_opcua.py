@@ -318,6 +318,104 @@ def test_cambiar_el_periodo_reabre_la_suscripcion():
     assert aperturas == [0.1, 0.02]
 
 
+def test_cambiar_el_mapeo_reabre_la_suscripcion():
+    """
+    El mapeo rol -> variable también se fija al abrir la suscripción: los nodos
+    monitorizados y la etiqueta `mapping` de cada muestra salen de un closure.
+    Sin reabrir, cambiar el set point desde la vista no hacía nada y el
+    desplegable volvía solo a la variable anterior con la siguiente muestra.
+    """
+    import threading
+    import time as _t
+
+    reader = ReaderFalso.crear(0.1)
+    aperturas = []
+
+    def abrir(_node):
+        aperturas.append(dict(reader.mapping))
+        reader._requested_period_s = reader.period_s
+        reader._revised_period_s = reader.period_s
+        reader._last_subscription_sample = _t.monotonic()
+        reader._subscribed_mapping_version = reader._mapping_version
+        reader._sampler = type("S", (), {"is_active": True, "stop": lambda s: None})()
+        return True
+
+    reader._try_subscription = abrir
+    reader.mapping = {"setpoint": "HMI_SP_Local_Automatico"}
+    reader._node_cache = {}
+    import threading as _th
+    reader._io_lock = _th.RLock()
+
+    hilo = threading.Thread(target=lambda: reader.muestrear_por_suscripcion(None), daemon=True)
+    hilo.start()
+    _t.sleep(0.4)
+
+    reader.set_mapping({"setpoint": "Velocidad_Pct"})
+    _t.sleep(0.5)
+
+    reader._stop = True
+    hilo.join(2)
+
+    assert [a.get("setpoint") for a in aperturas] == ["HMI_SP_Local_Automatico", "Velocidad_Pct"]
+
+
+def test_una_suscripcion_desfasada_no_entrega_muestras_con_el_mapeo_viejo():
+    """
+    Entre `set_mapping` y la reapertura pasan hasta 200 ms. Las muestras que la
+    suscripción vieja entregue en ese hueco llevan el mapeo anterior y harían
+    que la vista deshiciera el cambio del usuario.
+    """
+    import threading as _th
+    import time as _t
+
+    from infrastructure.ctrlx.plc_reader import PLCReader
+
+    reader = PLCReader.__new__(PLCReader)
+    reader._stop = False
+    reader.period_s = 0.1
+    reader.mapping = {"setpoint": "HMI_SP_Local_Automatico"}
+    reader._node_cache = {}
+    reader._io_lock = _th.RLock()
+    reader._sampler = None
+    reader._variable_names = ["HMI_SP_Local_Automatico", "Velocidad_Pct"]
+    reader._catalog_ts = _t.monotonic()
+    reader._refresh_catalog_locked = lambda node: None
+    reader._resolve_node = lambda nombre: object()
+    reader._opc = type("O", (), {"value_node": lambda s, n: n, "client": None})()
+
+    entregadas = []
+    reader._on_subscription_sample = lambda parcial, catalog, mapping: entregadas.append(mapping)
+
+    capturado = {}
+
+    class SamplerFalso:
+        monitored_count = 1
+        def __init__(self, client, nodos): pass
+        def start(self, period, entregar):
+            capturado["entregar"] = entregar
+            return period
+        def stop(self): pass
+
+    import infrastructure.ctrlx.plc_reader as mod
+    original = mod.OpcUaSampler
+    mod.OpcUaSampler = SamplerFalso
+    try:
+        assert reader._try_subscription(None) is True
+    finally:
+        mod.OpcUaSampler = original
+
+    entregar = capturado["entregar"]
+
+    entregar({"raw": {}, "timestamp": None})
+    assert len(entregadas) == 1
+    assert entregadas[0]["setpoint"] == "HMI_SP_Local_Automatico"
+
+    reader.set_mapping({"setpoint": "Velocidad_Pct"})
+
+    entregar({"raw": {}, "timestamp": None})   # llega de la suscripción vieja
+    assert len(entregadas) == 1, "una muestra con el mapeo viejo no debe entregarse"
+
+
 def test_si_al_reabrir_ya_no_se_puede_suscribir_se_cae_a_polling():
     import threading
     import time as _t
