@@ -430,6 +430,10 @@ dice qué está pasando de verdad.
 | `revised_period_s` | Lo real. Por suscripción, lo que **concedió** el servidor; por polling, el intervalo **medido** entre las últimas muestras. |
 | `honored` | `true` si lo real está dentro del 25 % de lo pedido. |
 | `reason` | Por qué se cayó a polling, si aplica. |
+| `publishing_period_s` | Cada cuánto publica el servidor el lote. Es la latencia **máxima** con la que retiene un cambio antes de mandarlo. |
+| `delay_s` | Ventana de seguridad con la que el lector emite las muestras (≈ `publishing_period_s` + un periodo + 50 ms). Es cuánto tarda una muestra en *verse*; **no** desplaza el eje de tiempo. |
+| `late_notifications` | Notificaciones que llegaron cuando su ciclo ya se había emitido. Tiene que ser `0`; si crece, el servidor retiene más de lo que declara. |
+| `recent_notifications` | Últimas 40 notificaciones crudas: variable, valor, `source_ts`, `cycle` asignado, `grid_offset` (0 = sobre la rejilla de muestreo; entre −1 y 0 = cambió entre dos muestreos y se asignó al siguiente) y `arrival_lag_s`. |
 
 **Por qué existen dos modos.** Con *polling* cada muestra cuesta un viaje completo
 de ida y vuelta, así que el periodo nunca puede bajar de la latencia de red: pedir
@@ -438,6 +442,25 @@ de ida y vuelta, así que el periodo nunca puede bajar de la latencia de red: pe
 (puede bajar al ciclo de tarea del PLC), acumula en una cola y envía el lote entero
 cada `PublishingInterval` — así que el ritmo lo marca el PLC y no la red. Ahí sí se
 llega a 10-20-30 ms.
+
+**Latencia del lote y eje de tiempo.** Publicar en lotes tiene un precio: todo lo
+que va en el lote llega tarde, hasta un `PublishingInterval` entero. Por eso el
+intervalo de publicación se **acota a 100 ms** (`OpcUaSampler.MAX_PUBLISHING_MS`)
+sea cual sea el periodo de muestreo — antes era `10 × periodo`, y con 500 ms de
+muestreo el PLC retenía cada cambio hasta 5 s. Y por eso las muestras se colocan
+por el `SourceTimestamp` del servidor, en el instante en que el PLC las tomó,
+nunca en el instante en que llegaron. El servidor muestrea sobre una **rejilla**
+fija (cada periodo, con la fase del primer timestamp); un cambio que ocurre entre
+dos instantes de la rejilla —el actuador, escrito por OPC UA en cualquier momento—
+se asigna al **siguiente** instante de muestreo, que es cuando el servidor lo
+observó, nunca al más cercano: así la señal leída no puede preceder a la orden y
+las dos variables quedan sobre la misma rejilla, igual que con polling. El
+agrupador (`_Agrupador`) emite los ciclos
+en orden con una ventana de seguridad `delay_s` que cubre el lote completo, rellena
+con el último valor los ciclos en los que el servidor no reportó cambios (una
+suscripción OPC UA solo notifica cambios) y entrega cada muestra con
+`captured_monotonic`, su instante de captura en el reloj local. Ese instante es el
+que usa el ensayo para etiquetarla — ver [El comando en las muestras](#el-comando-en-las-muestras).
 
 El lector **siempre intenta la suscripción primero** y cae a polling si el servidor
 no la acepta, sin interrumpir el trabajo. Cambiar el tiempo de muestreo con una
@@ -771,15 +794,31 @@ capturadas **se conservan**: si alcanzan, se puede identificar igual.
 ### El comando en las muestras
 
 Mientras hay un ensayo corriendo, cada `sample` se etiqueta con lo que el
-backend estaba comandando en ese instante:
+backend comandaba **en el instante en que el PLC tomó la muestra**
+(`captured_monotonic`), no en el instante en que la muestra llegó:
 
 | Campo | Qué es |
 |---|---|
 | `actuator` | Lo que el PLC **reporta**. No se toca |
-| `actuator_cmd` | Lo que el backend **pidió** |
+| `actuator_cmd` | Lo que el backend **pedía** cuando se tomó la muestra |
 | `actuator_cmd_pct` | Lo mismo en % de span |
 | `test_phase` | `baseline` o `step` |
-| `test_elapsed_s` | Segundos desde el arranque del ensayo |
+| `test_elapsed_s` | Instante de **captura**, en segundos desde el inicio de la grabación |
+| `captured_monotonic` | Instante de captura en el reloj local (`time.monotonic()`). Siempre presente, haya o no ensayo |
+
+La distinción importa porque por suscripción las muestras viajan en lotes y
+llegan tarde. Etiquetarlas con el comando "de ahora" (lo que hacía
+`current_command()`) le colgaba el valor del escalón a muestras tomadas antes de
+escribirlo, y la vista dibujaba "Leído del PLC" corrido respecto a "Comandado":
+un escalón escrito a los 40 s aparecía leído a los 44. `TestRunnerService.command_at()`
+resuelve el comando y el tiempo a partir del instante de captura, y la vista
+(`pushEnsayoSample`) ubica cada muestra en `test_elapsed_s`, en vez de hacer
+sample-and-hold sobre "la última que llegó" en cada `test_tick`.
+
+Las muestras tomadas **antes** de empezar a grabar (estaban en vuelo cuando se
+limpió el buffer) no se etiquetan. Las tomadas dentro del ensayo se siguen
+etiquetando hasta `LABEL_GRACE_S` (2 s) después de terminar, para que la cola del
+ensayo, que llega en el último lote, no se pierda.
 
 Van en campos aparte a propósito: comparar `actuator` contra `actuator_cmd` es lo
 que permite detectar que el actuador saturó, llegó tarde o directamente no

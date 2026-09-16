@@ -370,11 +370,17 @@ function onTestStarted(data) {
 
 
 /**
- * `test_tick`: una por muestra.
+ * `test_tick`: una por muestra del reloj del ensayo.
  *
- * El actuador es lo que el backend COMANDA (`actuator_cmd`); el sensor y el
- * setpoint son el último valor REAL del PLC, cacheado por handleSample.
- * Es un sample-and-hold: se muestrea la señal del PLC al ritmo del ensayo.
+ * Solo mueve el contador y la fase. Las curvas NO se llenan aquí.
+ *
+ * Antes este tick hacía sample-and-hold: tomaba "la última muestra que
+ * llegó" y la pintaba en el instante del reloj del ensayo. Eso convierte
+ * cualquier latencia de transporte en un corrimiento horizontal: por
+ * suscripción OPC UA las muestras viajan en lotes y llegaban hasta varios
+ * segundos después de tomadas, así que el escalón escrito a los 40 s
+ * aparecía "leído" a los 44. Ahora cada muestra se ubica por su propio
+ * instante de captura (`test_elapsed_s`), en handleSample.
  */
 function onTestTick(data) {
   if (!data) return;
@@ -383,30 +389,68 @@ function onTestTick(data) {
   State.ensayo.elapsedS = Number(data.elapsed_s) || 0;
   State.ensayo.phase    = data.phase || null;
 
-  const latest = State.latestSample || {};
+  showEnsayoTimer("running", State.ensayo.elapsedS);
+}
+
+
+/**
+ * Mete una muestra del PLC en el buffer del ensayo, en el instante en que el
+ * PLC la tomó.
+ *
+ * `test_elapsed_s` y `actuator_cmd` los pone el backend a partir del instante
+ * de CAPTURA de la muestra (no del de llegada): así una muestra que viajó en
+ * un lote cae donde corresponde, y el comandado que la acompaña es el que
+ * regía en ese instante.
+ */
+function pushEnsayoSample(data) {
+  const t = Number(data?.test_elapsed_s);
+  if (!Number.isFinite(t) || t < 0) return false;
+  if (data.test_phase === "preset") return false;   // todavía no se graba
+  if (!State.ensayo.plan) return false;             // no hay ensayo en la vista
+
   const s = State.sampleStore;
 
-  s.time.push(State.ensayo.elapsedS);
+  // El eje tiene que crecer. Tras una reconexión el backend reenvía la
+  // última muestra (`latest`), y una repetida encimaría dos puntos.
+  const ultimo = s.time.length ? s.time[s.time.length - 1] : -Infinity;
+  if (t <= ultimo) return false;
+
+  s.time.push(t);
 
   // LEÍDO del PLC — la variable que el usuario mapeó a cada rol.
   // Es lo que se grafica y lo que la identificación consume de verdad.
-  s.actuator_ma.push(latest.actuatorMa);
-  s.actuator_pct.push(latest.actuatorPct);
-  s.sensor_ma.push(latest.sensorMa);
-  s.sensor_pct.push(latest.sensorPct);
-  s.setpoint_ma.push(latest.setpointMa);
-  s.setpoint_pct.push(latest.setpointPct);
+  s.actuator_ma.push(valueForRole(data, "actuator"));
+  s.actuator_pct.push(pickNumber(data.actuator_pct));
+  s.sensor_ma.push(valueForRole(data, "sensor"));
+  s.sensor_pct.push(pickNumber(data.sensor_pct));
+  s.setpoint_ma.push(valueForRole(data, "setpoint"));
+  s.setpoint_pct.push(pickNumber(data.setpoint_pct));
 
-  // COMANDADO por el backend. Va aparte: si se guardara en `actuator_ma` el
-  // gráfico mostraría siempre el escalón ideal y cambiar la variable mapeada
-  // no tendría ningún efecto visible — que es justo lo que pasaba antes.
+  // COMANDADO por el backend en ese instante. Va aparte: si se guardara en
+  // `actuator_ma` el gráfico mostraría siempre el escalón ideal y cambiar la
+  // variable mapeada no tendría ningún efecto visible.
   s.actuator_cmd_ma.push(pickNumber(data.actuator_cmd));
   s.actuator_cmd_pct.push(pickNumber(data.actuator_cmd_pct));
 
-  showEnsayoTimer("running", State.ensayo.elapsedS);
+  return true;
+}
 
-  plotCapture();
-  fillManualTextareas();
+
+/**
+ * Redibuja como mucho cada `PLOT_EVERY_MS`. A 10 ms de muestreo llegan cien
+ * muestras por segundo, y Chart.js destruye y recrea el gráfico en cada
+ * `plotCapture`: sin acotarlo el navegador se pasa el ensayo dibujando.
+ */
+const PLOT_EVERY_MS = 100;
+let _plotTimer = null;
+
+function schedulePlot() {
+  if (_plotTimer !== null) return;
+  _plotTimer = setTimeout(() => {
+    _plotTimer = null;
+    plotCapture();
+    fillManualTextareas();
+  }, PLOT_EVERY_MS);
 }
 
 
@@ -451,6 +495,10 @@ function showEnsayoTimer(estado, elapsed) {
 /** `test_finished`: el ensayo completó su duración. */
 function onTestFinished(data) {
   State.ensayo.running = false;
+
+  // Las últimas muestras todavía vienen en camino (viajan en lote): el
+  // backend las sigue etiquetando un par de segundos y handleSample las
+  // pinta al llegar. Aquí solo se cierra la vista.
 
   // Se oculta al terminar, como pide el diseño.
   showEnsayoTimer("hidden", State.ensayo.elapsedS);
@@ -780,13 +828,10 @@ function handleWsMessage(msg) {
 /* ==================== HANDLERS ==================== */
 
 /**
- * Cada muestra que llega hace DOS cosas independientes:
+ * Cada muestra que llega hace TRES cosas independientes:
  *   1. Sincronizar mapping y poblar dropdowns del paso 1 (siempre).
  *   2. Actualizar los live values del paso 3 (siempre).
- *
- * NO toca el sampleStore ni redibuja el chart: de eso se encarga onTestTick,
- * al ritmo que marca el backend. Aquí solo se cachea la última muestra, que
- * es lo que ese tick lee para el sensor y el setpoint (sample-and-hold).
+ *   3. Si trae `test_elapsed_s`, entrar al buffer del ensayo en ese instante.
  *
  * Los samples llegan siempre, haya o no ensayo, porque los live values del
  * paso 3 y los dropdowns del paso 1 tienen que funcionar igual.
@@ -798,8 +843,7 @@ function handleSample(data) {
   }
   populateVariableDropdowns(data);
 
-  // 2. Cachear la última muestra completa — la usa onTestTick para
-  //    llenar el chart del sensor con el valor real más reciente.
+  // 2. Cachear la última muestra completa — para los live values.
   const latest = State.latestSample;
   latest.actuatorMa  = valueForRole(data, "actuator");
   latest.sensorMa    = valueForRole(data, "sensor");
@@ -811,6 +855,11 @@ function handleSample(data) {
   // 3. Live values (siempre)
   updateLiveValues(latest);
   updateVariablePreview(data);
+
+  // 4. Si la muestra pertenece a un ensayo, va al buffer EN SU INSTANTE de
+  //    captura. Es lo que hace que "Leído del PLC" caiga encima de
+  //    "Comandado" y no corrido por la latencia del lote.
+  if (pushEnsayoSample(data)) schedulePlot();
 }
 
 

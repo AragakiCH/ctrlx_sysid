@@ -284,6 +284,10 @@ class PLCReader:
         # marca el instante de captura.
         sample["plc_time"] = sample.get("time")
         sample["time"] = round(captured_at - self._clock_start, 4)
+        # Instante de captura en el dominio de `time.monotonic()`. Es lo que
+        # permite etiquetar la muestra con lo que el ensayo comandaba EN ESE
+        # INSTANTE, y no en el instante en que la muestra llegó por la red.
+        sample["captured_monotonic"] = captured_at
 
         if self.include_raw:
             sample["raw"] = raw_values
@@ -322,6 +326,30 @@ class PLCReader:
     def subscription_error(self) -> Optional[str]:
         """Por qué no se pudo suscribir, si se cayó a polling."""
         return self._subscription_error
+
+    @property
+    def publishing_period_s(self) -> Optional[float]:
+        """Intervalo de publicación que concedió el servidor (latencia máxima del lote)."""
+        sampler = self._sampler
+        return sampler.publishing_period_s if sampler is not None else None
+
+    @property
+    def subscription_delay_s(self) -> Optional[float]:
+        """Retraso fijo con el que se emiten las muestras de la suscripción."""
+        sampler = self._sampler
+        return sampler.delay_s if sampler is not None else None
+
+    @property
+    def late_notifications(self) -> int:
+        """Notificaciones que llegaron con su ciclo ya emitido. Debe ser 0."""
+        sampler = self._sampler
+        return sampler.late_notifications if sampler is not None else 0
+
+    @property
+    def recent_notifications(self) -> list[dict]:
+        """Últimas notificaciones crudas de la suscripción, para diagnóstico."""
+        sampler = self._sampler
+        return sampler.recent_notifications if sampler is not None else []
 
     def _try_subscription(self, program_node) -> bool:
         """
@@ -384,9 +412,16 @@ class PLCReader:
             self._revised_period_s = revisado
             self._last_subscription_sample = time.monotonic()
 
+            publishing = getattr(sampler, "publishing_period_s", None)
+            retraso = getattr(sampler, "delay_s", None)
+            detalle = ""
+            if isinstance(publishing, (int, float)):
+                detalle += f", publicación {publishing * 1000:.0f} ms"
+            if isinstance(retraso, (int, float)):
+                detalle += f", emisión con {retraso * 1000:.0f} ms de ventana"
             print(
                 f"[SUB] Activa — pedido {self.period_s * 1000:.0f} ms, "
-                f"concedido {revisado * 1000:.0f} ms, "
+                f"concedido {revisado * 1000:.0f} ms{detalle}, "
                 f"{sampler.monitored_count}/{len(nodos)} variables aceptadas: "
                 f"{', '.join(nodos)}"
             )
@@ -459,11 +494,28 @@ class PLCReader:
             self._subscription_delivered = True
             self._last_real_notification = time.monotonic()
 
+        # El agrupador entrega `monotonic`: el instante local en que el PLC
+        # tomó la muestra, calculado con el espaciado de los timestamps del
+        # servidor y anclado por la notificación que llegó con menos latencia.
+        # Es lo que pone la muestra en su sitio aunque haya viajado en un lote.
+        captured_at = parcial.get("monotonic")
+        if not isinstance(captured_at, (int, float)):
+            captured_at = self._anclar_reloj_del_servidor(parcial.get("timestamp"))
+
+        # El ancla del agrupador solo se mueve hacia atrás (afina con las
+        # primeras notificaciones). Si eso adelanta una muestra por detrás de
+        # la anterior, se la empuja un pelo: el eje tiene que crecer siempre.
+        if (
+            self._last_sample_monotonic is not None
+            and captured_at <= self._last_sample_monotonic
+        ):
+            captured_at = self._last_sample_monotonic + 1e-3
+
         sample = self._compose_sample(
             raw_values=parcial.get("raw", {}),
             catalog=catalog,
             effective_mapping=effective_mapping,
-            captured_at=self._anclar_reloj_del_servidor(parcial.get("timestamp")),
+            captured_at=captured_at,
         )
 
         if self.on_sample:

@@ -50,8 +50,11 @@ window.State = {
   },
 
   // ---------- Buffer de muestras del ensayo ----------
-  // Lo llena `onTestTick` (websocket.js) con los mensajes {type:"test_tick"}
-  // que emite el backend, al periodo de muestreo configurado.
+  // Lo llena `pushEnsayoSample` (websocket.js) con cada mensaje {type:"sample"}
+  // que trae `test_elapsed_s`: el instante en que el PLC TOMÓ la muestra,
+  // medido desde el inicio de la grabación. No se usa el instante de llegada:
+  // por suscripción las muestras viajan en lotes y llegan tarde, y colocarlas
+  // "al llegar" corría el escalón leído respecto al comandado.
   //
   //   actuator_*      → lo que el PLC REPORTA en la variable mapeada al rol.
   //   actuator_cmd_*  → lo que el backend COMANDA según el perfil del ensayo.
@@ -125,9 +128,9 @@ window.State = {
 
   // ---------- Última muestra recibida del PLC ----------
   // handleSample actualiza esto en cada mensaje `sample` (siempre, haya
-  // o no ensayo). onTestTick lo lee para llenar el chart del sensor con
-  // el valor real más reciente en cada tick — sample-and-hold: la señal
-  // del PLC se muestrea al ritmo que marca el ensayo del backend.
+  // o no ensayo). Alimenta los live values del paso 3. Las curvas del
+  // ensayo NO salen de aquí: cada muestra entra al sampleStore en su
+  // propio instante de captura (ver pushEnsayoSample).
   latestSample: {
     actuatorMa:  null,
     actuatorPct: null,

@@ -114,6 +114,7 @@ class TestRunnerService:
         self._plan: Optional[dict] = None
         self._started_at: Optional[float] = None  # time.time(), para la vista
         self._monotonic_start: Optional[float] = None  # base del reloj interno
+        self._ended_monotonic: Optional[float] = None  # cuándo dejó de correr
 
         self._index = 0
         self._elapsed_s = 0.0
@@ -281,6 +282,7 @@ class TestRunnerService:
 
             self._started_at = time.time()
             self._monotonic_start = time.monotonic()
+            self._ended_monotonic = None
             self._index = 0
             self._elapsed_s = 0.0
             self._write_errors = 0
@@ -309,6 +311,7 @@ class TestRunnerService:
 
             if was_running:
                 self._status = STATUS_STOPPED
+                self._ended_monotonic = time.monotonic()
 
         if was_running:
             # El actuador vuelve a su valor inicial: una parada de emergencia
@@ -544,6 +547,7 @@ class TestRunnerService:
         with self._lock:
             if self._status == STATUS_RUNNING:
                 self._status = STATUS_FINISHED
+                self._ended_monotonic = time.monotonic()
             state = self._state_locked()
 
         self._emit("test_finished", state)
@@ -622,6 +626,7 @@ class TestRunnerService:
         with self._lock:
             self._abort_reason = reason
             self._status = STATUS_ABORTED
+            self._ended_monotonic = time.monotonic()
 
         self._stop_flag.set()
 
@@ -716,6 +721,72 @@ class TestRunnerService:
                 "actuator_cmd_pct": self._command_pct,
                 "test_phase": self._phase,
                 "test_elapsed_s": round(self._elapsed_s, 3),
+            }
+
+    # Cuánto después del final del ensayo se siguen etiquetando muestras. Las
+    # últimas viajan en un lote y llegan cuando el runner ya terminó; sin este
+    # margen el gráfico perdería la cola del ensayo. Se mide sobre el instante
+    # de CAPTURA de la muestra, no sobre cuándo llegó.
+    LABEL_GRACE_S = 2.0
+
+    def command_at(self, captured_monotonic: Optional[float]) -> Optional[dict]:
+        """
+        Valor comandado **en el instante en que se tomó la muestra**, o `None`
+        si esa muestra no pertenece a ningún ensayo.
+
+        Es la versión correcta de `current_command()` para etiquetar muestras
+        del PLC. Las muestras por suscripción llegan en lotes, cientos de ms
+        (antes: segundos) después de que el PLC las tomara. Etiquetarlas con lo
+        que se comanda "ahora" les colgaba el valor del escalón a muestras
+        tomadas antes de escribirlo, y la vista dibujaba el escalón leído a la
+        hora de LLEGADA, corrido respecto al comandado.
+
+        Aquí `test_elapsed_s` sale del instante de captura contra el origen del
+        reloj del ensayo, y `actuator_cmd` es lo que el perfil pedía en ese
+        instante. Con eso una muestra se coloca en su sitio aunque llegue tarde.
+        """
+        if not isinstance(captured_monotonic, (int, float)):
+            return self.current_command()
+
+        with self._lock:
+            plan = self._plan
+            origen = self._monotonic_start
+
+            if plan is None or origen is None or self._status == STATUS_IDLE:
+                return None
+
+            if self._status == STATUS_RUNNING and self._phase == PHASE_PRESET:
+                # Todavía no se graba: se etiqueta con la fase, sin tiempo de
+                # ensayo, igual que hacía `current_command`.
+                return {
+                    "actuator_cmd": self._command,
+                    "actuator_cmd_pct": self._command_pct,
+                    "test_phase": PHASE_PRESET,
+                    "test_elapsed_s": round(self._elapsed_s, 3),
+                }
+
+            elapsed = float(captured_monotonic) - origen
+            duracion = float(plan["duration_s"])
+
+            if elapsed < 0.0:
+                # Tomada antes de que empezara la grabación (estaba en vuelo
+                # cuando se limpió el buffer). No es del ensayo.
+                return None
+
+            if self._status != STATUS_RUNNING:
+                fin = self._ended_monotonic
+                if fin is None or float(captured_monotonic) > fin + self.LABEL_GRACE_S:
+                    return None
+                if elapsed > duracion + self.LABEL_GRACE_S:
+                    return None
+
+            value, value_pct, phase = self._value_at(elapsed, plan)
+
+            return {
+                "actuator_cmd": value,
+                "actuator_cmd_pct": value_pct,
+                "test_phase": phase,
+                "test_elapsed_s": round(elapsed, 3),
             }
 
     def is_running(self) -> bool:

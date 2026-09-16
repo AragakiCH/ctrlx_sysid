@@ -358,3 +358,82 @@ def test_no_acumula_deriva():
 
     # El último tick debería caer cerca de 0.99 s, no bastante después.
     assert ticks[-1]["elapsed_s"] == pytest.approx(0.99, abs=0.15)
+
+
+# --------------------------------------------------------------------------- #
+# Etiquetado de muestras por su instante de captura
+# --------------------------------------------------------------------------- #
+#
+# Las muestras del PLC llegan por suscripción en lotes, cientos de ms después
+# de tomadas. `current_command()` devolvía lo que se comanda AHORA, así que a
+# una muestra tomada antes del escalón pero entregada después se le colgaba el
+# valor del escalón, y la vista dibujaba "Leído del PLC" corrido respecto a
+# "Comandado". `command_at` etiqueta con lo que regía cuando se tomó.
+
+
+def test_command_at_etiqueta_con_el_comando_que_regia_al_capturar(runner):
+    runner.start(presettle=False)
+    origen = runner._monotonic_start
+    plan = runner.get_plan()
+
+    antes = runner.command_at(origen + plan["step_at_s"] - 0.05)
+    despues = runner.command_at(origen + plan["step_at_s"] + 0.05)
+
+    assert antes["actuator_cmd"] == plan["from_value"]
+    assert antes["test_phase"] == PHASE_BASELINE
+    assert despues["actuator_cmd"] == plan["to_value"]
+    assert despues["test_phase"] == PHASE_STEP
+
+
+def test_command_at_mide_el_tiempo_desde_la_captura_no_desde_la_llegada(runner):
+    runner.start(presettle=False)
+    origen = runner._monotonic_start
+
+    time.sleep(0.2)   # "llega" 200 ms después de tomada
+
+    etiqueta = runner.command_at(origen + 0.05)
+
+    assert etiqueta["test_elapsed_s"] == pytest.approx(0.05, abs=1e-3)
+
+
+def test_una_muestra_tomada_antes_de_grabar_no_es_del_ensayo(runner):
+    """Estaba en vuelo cuando se limpió el buffer: no lleva etiqueta."""
+    runner.start(presettle=False)
+    origen = runner._monotonic_start
+
+    assert runner.command_at(origen - 0.1) is None
+
+
+def test_sin_instante_de_captura_se_cae_al_comando_actual(runner):
+    runner.start(presettle=False)
+
+    assert runner.command_at(None) == runner.current_command()
+
+
+def test_sin_ensayo_command_at_no_etiqueta(runner):
+    assert runner.command_at(time.monotonic()) is None
+
+
+def test_la_cola_del_ensayo_se_sigue_etiquetando_tras_terminar(runner):
+    """
+    Las últimas muestras llegan cuando el runner ya terminó. Si dejaran de
+    etiquetarse, la vista perdería el final de la curva.
+    """
+    runner.start(presettle=False)
+    origen = runner._monotonic_start
+    plan = runner.get_plan()
+    run_to_completion(runner)
+
+    assert not runner.is_running()
+
+    ultima = runner.command_at(origen + plan["duration_s"] - 0.01)
+    assert ultima is not None
+    assert ultima["actuator_cmd"] == plan["to_value"]
+
+
+def test_mucho_despues_de_terminar_ya_no_se_etiqueta(runner):
+    runner.start(presettle=False)
+    runner.stop()
+
+    fin = runner._ended_monotonic
+    assert runner.command_at(fin + TestRunnerService.LABEL_GRACE_S + 1.0) is None

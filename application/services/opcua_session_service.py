@@ -389,12 +389,29 @@ class OpcUaSessionService:
         if revisado:
             honored = revisado <= pedido * 1.25
 
+        publishing = getattr(reader, "publishing_period_s", None)
+        retraso = getattr(reader, "subscription_delay_s", None)
+
         return {
             "mode": modo,
             "requested_period_s": pedido,
             "revised_period_s": round(revisado, 4) if revisado else None,
             "honored": honored,
             "reason": reader.subscription_error,
+            # Latencia del lote y ventana de emisión: cuánto tarda una muestra
+            # en aparecer. NO desplaza el eje de tiempo — cada muestra se
+            # coloca en el instante en que el PLC la tomó—, solo retrasa
+            # cuándo se ve.
+            "publishing_period_s": (
+                round(publishing, 4) if isinstance(publishing, (int, float)) else None
+            ),
+            "delay_s": round(retraso, 4) if isinstance(retraso, (int, float)) else None,
+            "late_notifications": getattr(reader, "late_notifications", 0),
+            # Qué timestamps manda el servidor y a qué ciclo fue cada uno.
+            # `grid_offset` 0 = sobre la rejilla de muestreo; un valor entre
+            # -1 y 0 es un cambio ocurrido ENTRE dos muestreos (una escritura
+            # OPC UA, por ejemplo) que se asignó al siguiente.
+            "recent_notifications": getattr(reader, "recent_notifications", []),
         }
 
     def check_writable(self, role: str = "actuator") -> tuple[bool, str]:

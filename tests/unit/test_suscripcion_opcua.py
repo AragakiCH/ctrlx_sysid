@@ -215,7 +215,8 @@ def test_muestrea_mas_rapido_de_lo_que_publica():
     params = cliente.creada[0].RequestedParameters
 
     assert params.SamplingInterval == pytest.approx(20.0)
-    assert params.QueueSize >= 10   # cabe un lote entero sin descartar
+    # Cabe un lote entero sin descartar: publishing (100 ms) / sampling (20 ms).
+    assert params.QueueSize >= 5
 
 
 def test_si_el_servidor_rechaza_lanza_para_caer_a_polling():
@@ -878,8 +879,10 @@ def test_el_latido_repite_el_ultimo_valor_conocido(recogidas):
 def test_las_muestras_reales_no_se_marcan_como_latido(agrupador, recogidas):
     agrupador.agregar("rActuator", 1.0, 100.000)
     agrupador.agregar("rActuator", 2.0, 100.010)
+    agrupador.vaciar()
 
     assert recogidas[0]["heartbeat"] is False
+    assert recogidas[1]["heartbeat"] is False
 
 
 def test_el_latido_no_pisa_un_ciclo_ya_emitido_con_datos_reales(recogidas):
@@ -939,8 +942,323 @@ def test_un_proceso_quieto_sigue_dando_muestras_al_ritmo_pedido():
     sampler.start(0.02, recogidas.append)
 
     sampler._agrupador.agregar("y", 8.085, 1000.0)   # único valor del servidor
-    _t.sleep(0.5)
+    _t.sleep(0.8)
     sampler.stop()
 
-    assert len(recogidas) >= 15                       # ~25 esperadas en 0.5 s
+    # Las muestras salen con la ventana de seguridad (~170 ms aquí), así que
+    # en 0.8 s se emiten ~30; se exige holgadamente menos.
+    assert len(recogidas) >= 15
     assert all(m["raw"]["y"] == 8.085 for m in recogidas)
+
+
+# --------------------------------------------------------------------------- #
+# Las muestras se colocan en el instante en que el PLC las tomó, no al llegar
+# --------------------------------------------------------------------------- #
+#
+# El caso que se veía en la vista: muestreo de 500 ms, escalón escrito a los
+# 40 s y la curva "Leído del PLC" subiendo a los 44. El servidor publicaba en
+# lotes de 10 ciclos (5 s), el latido iba un solo ciclo por detrás y cuando el
+# lote llegaba sus ciclos ya habían salido con el valor viejo: se descartaban
+# como tardíos y el cambio aparecía en el siguiente latido, a la hora de
+# LLEGADA. Dentro del lote, además, las notificaciones vienen agrupadas por
+# variable, y emitir "al llegar una posterior" perdía las de la segunda.
+
+
+def _simular_lotes(bucket_s, ciclos, publishing_ciclos, valores_por_ciclo, nombres, retraso_s):
+    """
+    Reproduce un servidor que muestrea cada `bucket_s`, retiene las
+    notificaciones y las manda todas juntas cada `publishing_ciclos`, en el
+    orden real de un DataChangeNotification: por variable, y dentro de cada
+    variable por instante. Devuelve (muestras, instante_de_llegada_por_clave).
+    """
+    import time as _t
+
+    recogidas = []
+    llegadas = {}
+    g = _Agrupador(nombres, bucket_s=bucket_s, on_sample=recogidas.append, retraso_s=retraso_s)
+
+    base = 1_754_212_800.0
+    t_ini = _t.monotonic()
+
+    lote = []
+    for ciclo in range(ciclos):
+        lote.append(ciclo)
+        es_ultimo = ciclo == ciclos - 1
+        if len(lote) == publishing_ciclos or es_ultimo:
+            # el lote sale cuando el reloj real llega al final del lote
+            while _t.monotonic() - t_ini < (lote[-1] + 1) * bucket_s:
+                g.latido()
+                _t.sleep(bucket_s / 4)
+            for nombre in nombres:
+                for c in lote:
+                    v = valores_por_ciclo(nombre, c)
+                    if v is not None:
+                        g.agregar(nombre, v, base + c * bucket_s)
+                        llegadas.setdefault(c, _t.monotonic())
+            lote = []
+
+    # se deja pasar la ventana de seguridad para que salga todo
+    fin = _t.monotonic() + retraso_s + 3 * bucket_s
+    while _t.monotonic() < fin:
+        g.latido()
+        _t.sleep(bucket_s / 4)
+
+    return g, recogidas, llegadas, t_ini
+
+
+def test_un_escalon_que_viaja_en_lote_se_coloca_en_su_instante_y_no_al_llegar():
+    """
+    El actuador salta en el ciclo 12 y la notificación no llega hasta el
+    final del lote (ciclo 19). La muestra del ciclo 12 tiene que salir con el
+    valor nuevo y con `monotonic` en el ciclo 12: NI en el 19, NI descartada.
+    """
+    bucket = 0.02
+    publishing = 5   # ciclos por lote -> 100 ms
+
+    def valores(nombre, c):
+        if nombre == "u":
+            return 25.0 if c < 12 else 50.0
+        return 8.0 + 0.1 * c          # el sensor cambia cada ciclo
+
+    g, muestras, llegadas, t_ini = _simular_lotes(
+        bucket, ciclos=25, publishing_ciclos=publishing,
+        valores_por_ciclo=valores, nombres=["u", "y"],
+        retraso_s=publishing * bucket + bucket + 0.05,
+    )
+
+    assert g.tardias == 0, "con la ventana bien dimensionada nada llega tarde"
+
+    por_u = [m["raw"]["u"] for m in muestras]
+    assert 25.0 in por_u and 50.0 in por_u
+
+    primera_alta = next(i for i, m in enumerate(muestras) if m["raw"]["u"] == 50.0)
+    # todas las anteriores a la subida son 25, todas las posteriores 50:
+    assert all(v == 25.0 for v in por_u[:primera_alta])
+    assert all(v == 50.0 for v in por_u[primera_alta:])
+
+    # y la subida queda en el ciclo 12 según el reloj local estimado, con
+    # margen de un ciclo (redondeo del ancla), no en el ciclo 19 de llegada.
+    salto = muestras[primera_alta]["monotonic"] - t_ini
+    assert abs(salto - 12 * bucket) <= 1.5 * bucket, salto
+    assert salto < llegadas[12] - t_ini - 2 * bucket, "se ubicó a la hora de llegada"
+
+
+def test_el_transitorio_dentro_de_un_lote_no_se_colapsa(recogidas):
+    """
+    Antes, todas las notificaciones de un lote se descartaban menos la última
+    y el sensor daba un salto único. Cada ciclo del lote tiene que salir con
+    SU valor, y en orden.
+    """
+    bucket = 0.02
+
+    def valores(nombre, c):
+        return float(c)
+
+    g, muestras, _, _ = _simular_lotes(
+        bucket, ciclos=20, publishing_ciclos=5,
+        valores_por_ciclo=valores, nombres=["y"],
+        retraso_s=5 * bucket + bucket + 0.05,
+    )
+
+    reales = [m for m in muestras if not m["heartbeat"]]
+    assert [m["raw"]["y"] for m in reales] == [float(c) for c in range(20)]
+    assert g.tardias == 0
+
+
+def test_las_notificaciones_agrupadas_por_variable_se_reconstruyen_por_instante(recogidas):
+    """
+    Un DataChangeNotification trae primero TODAS las de una variable y luego
+    todas las de la otra: u(5), u(6), u(7), y(5), y(6), y(7). Emitir el ciclo
+    5 al ver llegar u(6) dejaba a y(5) y y(6) fuera. Cada ciclo tiene que
+    salir con las dos variables de ese ciclo.
+    """
+    g = _Agrupador(["u", "y"], bucket_s=0.01, on_sample=recogidas.append, retraso_s=1.0)
+
+    base = 500.0
+    for c in (5, 6, 7):
+        g.agregar("u", 10.0 + c, base + c * 0.01)
+    for c in (5, 6, 7):
+        g.agregar("y", 20.0 + c, base + c * 0.01)
+    g.vaciar()
+
+    assert [m["raw"] for m in recogidas] == [
+        {"u": 15.0, "y": 25.0},
+        {"u": 16.0, "y": 26.0},
+        {"u": 17.0, "y": 27.0},
+    ]
+    assert g.tardias == 0
+
+
+def test_los_huecos_entre_lotes_se_rellenan_con_el_ultimo_valor_emitido(recogidas):
+    """Sin huecos: el eje avanza un ciclo por muestra aunque el servidor calle."""
+    g = _Agrupador(["y"], bucket_s=0.01, on_sample=recogidas.append, retraso_s=0.0)
+
+    g.agregar("y", 1.0, 700.00)
+    g.agregar("y", 2.0, 700.05)     # cinco ciclos después; entre medio, nada
+    g.vaciar()
+
+    assert [m["raw"]["y"] for m in recogidas] == [1.0, 1.0, 1.0, 1.0, 1.0, 2.0]
+    assert [m["heartbeat"] for m in recogidas] == [False, True, True, True, True, False]
+
+
+def test_un_timestamp_inicial_viejo_no_abre_un_ciclo_en_el_pasado(recogidas):
+    """
+    El valor inicial de una variable que no cambia desde hace minutos llega
+    con el SourceTimestamp de su última escritura. Tomado literal, abre un
+    ciclo miles de posiciones atrás y descoloca el ancla del reloj.
+    """
+    g = _Agrupador(["u", "y"], bucket_s=0.5, on_sample=recogidas.append, retraso_s=1.0)
+
+    g.agregar("y", 8.0, 1000.0)          # fresco
+    g.agregar("u", 25.0, 1000.0 - 600)   # escrito hace 10 minutos
+    g.vaciar()
+
+    assert len(recogidas) == 1
+    assert recogidas[0]["raw"] == {"u": 25.0, "y": 8.0}
+
+
+def test_el_sampler_acota_el_intervalo_de_publicacion():
+    """
+    Con 500 ms de muestreo, publicar cada 10 periodos era retener cada cambio
+    hasta 5 s. El lote no puede pasar de MAX_PUBLISHING_MS sea cual sea el
+    periodo, y la ventana de emisión se dimensiona con lo concedido.
+    """
+    cliente = ClienteFalso()
+    sampler = OpcUaSampler(cliente, {"a": NodoFalso("a")})
+
+    concedido = sampler.start(0.5, lambda m: None)
+
+    assert concedido == pytest.approx(0.5)
+    assert sampler.publishing_period_s == pytest.approx(0.1)
+    assert sampler.delay_s == pytest.approx(0.1 + 0.5 + _Agrupador.MARGEN_S)
+    # la cola cubre un lote entero (aquí, una muestra) más margen
+    assert cliente.creada[0].RequestedParameters.QueueSize >= 1 + OpcUaSampler.QUEUE_MARGIN
+
+
+def test_con_muestreo_rapido_el_lote_sigue_siendo_de_varios_periodos():
+    """A 10 ms sí compensa agrupar: 10 muestras por mensaje, como antes."""
+    assert OpcUaSampler.publishing_interval_ms(10.0) == pytest.approx(100.0)
+    assert OpcUaSampler.publishing_interval_ms(20.0) == pytest.approx(100.0)
+    assert OpcUaSampler.publishing_interval_ms(500.0) == pytest.approx(100.0)
+
+
+def test_las_muestras_traen_el_instante_local_de_captura():
+    """`monotonic` es lo que alinea la señal con el reloj del ensayo."""
+    import time as _t
+
+    recogidas = []
+    g = _Agrupador(["y"], bucket_s=0.01, on_sample=recogidas.append, retraso_s=0.0)
+
+    antes = _t.monotonic()
+    g.agregar("y", 1.0, 900.00)
+    g.agregar("y", 2.0, 900.01)
+    g.vaciar()
+
+    assert all(isinstance(m["monotonic"], float) for m in recogidas)
+    assert recogidas[1]["monotonic"] - recogidas[0]["monotonic"] == pytest.approx(0.01)
+    assert abs(recogidas[0]["monotonic"] - antes) < 0.05
+
+
+def test_el_reader_usa_el_instante_estimado_por_el_agrupador():
+    """
+    Y lo publica como `captured_monotonic`, que es lo que el runner del
+    ensayo usa para etiquetar la muestra con el comando que regía entonces.
+    """
+    import time as _t
+
+    reader = _reader_de_suscripcion()
+    muestras = []
+    reader.on_sample = muestras.append
+
+    ahora = _t.monotonic()
+    parcial = {"raw": {"y": 1.0}, "timestamp": 1000.0, "monotonic": ahora - 0.3}
+
+    reader._on_subscription_sample(parcial, ["y"], {"sensor": "y"})
+
+    assert muestras[0]["captured_monotonic"] == pytest.approx(ahora - 0.3)
+
+
+def test_el_eje_del_reader_nunca_retrocede_aunque_el_ancla_se_afine():
+    reader = _reader_de_suscripcion()
+    muestras = []
+    reader.on_sample = muestras.append
+
+    reader._on_subscription_sample({"raw": {"y": 1.0}, "timestamp": 1.0, "monotonic": 100.00}, ["y"], {"sensor": "y"})
+    reader._on_subscription_sample({"raw": {"y": 2.0}, "timestamp": 1.0, "monotonic": 99.95}, ["y"], {"sensor": "y"})
+
+    assert muestras[1]["time"] > muestras[0]["time"]
+
+
+# --------------------------------------------------------------------------- #
+# La señal leída no puede preceder a la orden
+# --------------------------------------------------------------------------- #
+#
+# El servidor muestrea sobre una rejilla fija. El sensor cae siempre sobre ella
+# (lo escribe el PLC cada ciclo y el servidor lo muestrea cada periodo); el
+# actuador se escribe por OPC UA en cualquier momento entre dos muestreos.
+# Redondear su timestamp al ciclo MÁS CERCANO lo adelantaba hasta medio ciclo:
+# en la vista "Leído del PLC" subía antes que "Comandado", y el modelo veía un
+# tiempo muerto medio ciclo más largo de lo real.
+
+
+def test_un_cambio_entre_dos_muestreos_se_asigna_al_siguiente_no_al_mas_cercano(recogidas):
+    g = _Agrupador(["u", "y"], bucket_s=0.5, on_sample=recogidas.append, retraso_s=0.0)
+
+    base = 1000.0
+    for c in range(6):                       # sensor sobre la rejilla
+        g.agregar("y", 8.0, base + c * 0.5)
+    g.agregar("u", 50.0, base + 1.1)         # escrito 0.1 s después del ciclo 2 (t=1.0)
+    g.vaciar()
+
+    por_ciclo = {round((m["timestamp"] - base) / 0.5): m["raw"]["u"] for m in recogidas}
+
+    assert por_ciclo[2] is None, "en el ciclo 2 el servidor aún no lo había visto"
+    assert por_ciclo[3] == 50.0, "se observó en el siguiente muestreo"
+
+
+def test_un_timestamp_sobre_la_rejilla_con_jitter_no_salta_de_ciclo(recogidas):
+    g = _Agrupador(["y"], bucket_s=0.5, on_sample=recogidas.append, retraso_s=0.0)
+
+    base = 1000.0
+    g.agregar("y", 1.0, base)
+    g.agregar("y", 2.0, base + 0.5 + 0.02)   # 4 % de jitter hacia adelante
+    g.agregar("y", 3.0, base + 1.0 - 0.02)   # 4 % hacia atrás
+    g.vaciar()
+
+    assert [m["raw"]["y"] for m in recogidas] == [1.0, 2.0, 3.0]
+
+
+def test_un_timestamp_fuera_de_rejilla_no_adelanta_el_ancla_local():
+    """
+    El ancla (instante local del ciclo 0) se estima con el timestamp exacto,
+    no con el ciclo asignado: si se usara el ciclo, una escritura a mitad de
+    ciclo adelantaría TODAS las muestras posteriores hasta medio ciclo.
+    """
+    import time as _t
+
+    recogidas = []
+    g = _Agrupador(["u", "y"], bucket_s=0.5, on_sample=recogidas.append, retraso_s=0.0)
+
+    base = 1000.0
+    t_ini = _t.monotonic()
+    g.agregar("y", 8.0, base)
+    ancla_sensor = g._origen_local
+
+    _t.sleep(0.3)                             # el reloj real avanza hasta la escritura
+    g.agregar("u", 50.0, base + 0.26)        # entre ciclos; ciclo asignado = 1
+
+    assert g._origen_local >= ancla_sensor - 1e-3
+    assert g._origen_local >= t_ini - 1e-3
+
+
+def test_el_registro_de_notificaciones_dice_donde_cae_cada_timestamp():
+    g = _Agrupador(["u", "y"], bucket_s=0.5, on_sample=lambda m: None, retraso_s=0.0)
+
+    g.agregar("y", 8.0, 1000.0)
+    g.agregar("u", 50.0, 1000.3)
+
+    registro = g.registro
+    assert [r["name"] for r in registro] == ["y", "u"]
+    assert registro[0]["grid_offset"] == pytest.approx(0.0)
+    assert registro[1]["cycle"] == 1
+    assert -1.0 < registro[1]["grid_offset"] < 0.0

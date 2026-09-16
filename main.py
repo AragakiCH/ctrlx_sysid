@@ -252,11 +252,15 @@ def get_current_use_percent() -> bool:
 def on_sample(sample: dict) -> None:
     global event_loop, last_identification_result, last_step_index, _last_auto_ident_error
 
-    # Etiqueta la muestra con lo que el ensayo estaba comandando en ese instante.
-    # Va en campos aparte (`actuator_cmd`) y NO pisa el `actuator` leído del PLC:
-    # así se puede comparar lo que se pidió contra lo que hizo la planta y
+    # Etiqueta la muestra con lo que el ensayo comandaba EN EL INSTANTE EN QUE
+    # EL PLC LA TOMÓ (`captured_monotonic`), no en el instante en que llegó.
+    # Por suscripción las muestras viajan en lotes y llegan tarde; etiquetarlas
+    # con el comando "de ahora" corría el escalón leído respecto al comandado.
+    #
+    # Va en campos aparte (`actuator_cmd`) y NO pisa el `actuator` leído del
+    # PLC: así se puede comparar lo que se pidió contra lo que hizo la planta y
     # detectar que el actuador no obedeció, saturó o llegó tarde.
-    command = test_runner_service.current_command()
+    command = test_runner_service.command_at(sample.get("captured_monotonic"))
     if command is not None:
         sample.update(command)
 

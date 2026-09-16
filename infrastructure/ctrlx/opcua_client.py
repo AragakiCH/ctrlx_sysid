@@ -71,6 +71,11 @@ class CtrlxOpcUaClient:
         # Se vacía en cada (re)conexión: los nodos de una sesión cerrada no
         # sirven en la siguiente.
         self._value_node_cache: dict = {}
+        # Tipo declarado de cada variable escribible. Resolverlo es una lectura
+        # del atributo DataType (un viaje de red) que antes se pagaba en CADA
+        # escritura del ensayo. El tipo de una variable no cambia mientras dura
+        # la sesión, así que se recuerda y se vacía junto con el otro cache.
+        self._variant_type_cache: dict = {}
 
     @staticmethod
     def _opc_host_port(url: str) -> Tuple[str, str]:
@@ -202,6 +207,7 @@ class CtrlxOpcUaClient:
 
         # Sesión nueva: los nodos cacheados de la anterior ya no valen.
         self._value_node_cache.clear()
+        self._variant_type_cache.clear()
 
         self._client = client
         return client
@@ -272,6 +278,7 @@ class CtrlxOpcUaClient:
     def clear_node_cache(self) -> None:
         """Invalida los nodos cacheados. Obligatorio tras reconectar."""
         self._value_node_cache.clear()
+        self._variant_type_cache.clear()
 
     def read_value(self, node):
         return self.value_node(node).get_value()
@@ -372,9 +379,22 @@ class CtrlxOpcUaClient:
         target = self.value_node(node)
 
         try:
-            variant_type = target.get_data_type_as_variant_type()
+            clave = target.nodeid
         except Exception:
-            variant_type = None
+            clave = None
+
+        if clave is not None and clave in self._variant_type_cache:
+            variant_type = self._variant_type_cache[clave]
+        else:
+            try:
+                variant_type = target.get_data_type_as_variant_type()
+            except Exception:
+                variant_type = None
+
+            # Solo se recuerda un tipo resuelto: un fallo puntual de red no
+            # debe condenar a la variable a escribirse sin tipar.
+            if clave is not None and variant_type is not None:
+                self._variant_type_cache[clave] = variant_type
 
         if variant_type is None:
             # Sin información del servidor: que la librería infiera el tipo.
